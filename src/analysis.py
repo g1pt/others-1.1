@@ -81,3 +81,11 @@ def summarize_combinations(trades: list[Trade]) -> list[SummaryRow]:
         lambda t: f"{t.mmxm_phase}|{t.entry_method}|{'Tradable' if t.ob_tradable else 'NonTradable'}",
         "Combo",
     )
+
+
+def rank_summaries(rows: list[SummaryRow]) -> list[SummaryRow]:
+    """Rank summaries by stability, expectancy, and drawdown."""
+    return sorted(
+        rows,
+        key=lambda row: (-row.stability, -row.expectancy, row.max_drawdown, row.key),
+    )
