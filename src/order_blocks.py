@@ -3,8 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from collections import Counter
+
 from src.data import Candle
 from src.mmxm import MmxmPhase
+
+
+IMPULSE_MULTIPLIER = 2.0
+SWING_LOOKBACK = 5
+NEAR_LEVEL_PCT = 0.005
 
 
 @dataclass(frozen=True)
@@ -24,9 +31,12 @@ class OrderBlock:
     near_level: bool
     after_sweep: bool
     tradable: bool
+    tradability_failures: tuple[str, ...]
 
 
-def _swing_levels(candles: list[Candle], idx: int, lookback: int = 5) -> tuple[float, float]:
+def _swing_levels(
+    candles: list[Candle], idx: int, lookback: int = SWING_LOOKBACK
+) -> tuple[float, float]:
     window_start = max(0, idx - lookback)
     window = candles[window_start:idx]
     if not window:
@@ -67,7 +77,7 @@ def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[
         if is_bearish_ob and impulse_low >= candle.low:
             continue
 
-        if impulse_size < 2 * ob_range:
+        if impulse_size < IMPULSE_MULTIPLIER * ob_range:
             continue
 
         direction = "bullish" if is_bullish_ob else "bearish"
@@ -80,12 +90,20 @@ def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[
         after_sweep = phase.sweep is not None
         near_level = False
         if direction == "bullish":
-            near_level = abs(candle.low - swing_low) / candle.close < 0.005
+            near_level = abs(candle.low - swing_low) / candle.close < NEAR_LEVEL_PCT
         else:
-            near_level = abs(candle.high - swing_high) / candle.close < 0.005
+            near_level = abs(candle.high - swing_high) / candle.close < NEAR_LEVEL_PCT
         near_level = near_level or after_sweep
 
-        tradable = all([has_imbalance, has_bos, near_level])
+        tradability_failures = []
+        if not has_imbalance:
+            tradability_failures.append("failed_imbalance")
+        if not has_bos:
+            tradability_failures.append("failed_bos")
+        if not near_level:
+            tradability_failures.append("failed_location")
+        tradability_failures_tuple = tuple(tradability_failures)
+        tradable = not tradability_failures_tuple
 
         order_blocks.append(
             OrderBlock(
@@ -104,8 +122,18 @@ def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[
                 near_level=near_level,
                 after_sweep=after_sweep,
                 tradable=tradable,
+                tradability_failures=tradability_failures_tuple,
             )
         )
         ob_id += 1
 
     return order_blocks
+
+
+def tradability_failure_counts(order_blocks: list[OrderBlock]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for block in order_blocks:
+        if block.tradable:
+            continue
+        counts.update(block.tradability_failures)
+    return counts
