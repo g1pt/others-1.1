@@ -19,36 +19,78 @@ class Candle:
 
 
 def load_candles_csv(path: str | Path) -> list[Candle]:
-    """Load candles from a CSV file.
+    """Load candles from a CSV file."""
+    frame = pd.read_csv(path)
+    normalized = {column: column.strip().lower() for column in frame.columns}
+    columns = list(normalized.values())
 
-    Expected columns: timestamp, open, high, low, close, volume(optional).
-    """
+    timestamp_col = _find_column(
+        columns,
+        ["timestamp", "time", "date", "datetime"],
+        label="timestamp",
+    )
+    open_col = _find_column(columns, ["open", "o"], label="open")
+    high_col = _find_column(columns, ["high", "h"], label="high")
+    low_col = _find_column(columns, ["low", "l"], label="low")
+    close_col = _find_column(columns, ["close", "c"], label="close")
+    volume_candidates = [name for name in columns if name in {"volume", "vol"}]
+    volume_col = volume_candidates[0] if volume_candidates else None
+
+    reverse_lookup = {value: key for key, value in normalized.items()}
+    timestamp_values = frame[reverse_lookup[timestamp_col]]
+    numeric_values = pd.to_numeric(timestamp_values, errors="coerce")
+    if numeric_values.notna().sum() == len(frame):
+        parsed_time = pd.to_datetime(numeric_values, unit="s", utc=True)
+    else:
+        parsed_time = pd.to_datetime(timestamp_values, utc=True, errors="coerce")
+
+    frame = frame.copy()
+    frame["__timestamp"] = parsed_time
+    before_drop = len(frame)
+    frame = frame.dropna(subset=["__timestamp"])
+    if before_drop != len(frame):
+        print(
+            f"Filtered {before_drop - len(frame)} rows with invalid timestamps "
+            f"from {path}."
+        )
+
+    frame = frame.sort_values("__timestamp").drop_duplicates("__timestamp")
+    print(
+        "Loaded CSV candles from "
+        f"{path} | timestamp={timestamp_col}, open={open_col}, high={high_col}, "
+        f"low={low_col}, close={close_col}, volume={volume_col or 'n/a'} | "
+        f"rows={len(frame)}"
+    )
+
     candles: list[Candle] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
-        header = handle.readline().strip().split(",")
-        for line in handle:
-            parts = line.strip().split(",")
-            if not parts or len(parts) < 5:
-                continue
-            row = dict(zip(header, parts))
-            candles.append(
-                Candle(
-                    timestamp=row["timestamp"],
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row["volume"]) if "volume" in row and row["volume"] else None,
-                )
+    for _, row in frame.iterrows():
+        timestamp = row["__timestamp"].isoformat()
+        volume = (
+            float(row[reverse_lookup[volume_col]])
+            if volume_col and pd.notna(row[reverse_lookup[volume_col]])
+            else None
+        )
+        candles.append(
+            Candle(
+                timestamp=timestamp,
+                open=float(row[reverse_lookup[open_col]]),
+                high=float(row[reverse_lookup[high_col]]),
+                low=float(row[reverse_lookup[low_col]]),
+                close=float(row[reverse_lookup[close_col]]),
+                volume=volume,
             )
+        )
     return candles
 
 
-def _find_column(columns: list[str], candidates: list[str]) -> str:
+def _find_column(columns: list[str], candidates: list[str], label: str) -> str:
     for candidate in candidates:
         if candidate in columns:
             return candidate
-    raise ValueError(f"Missing required column. Looked for: {candidates}")
+    raise ValueError(
+        "Missing required column for "
+        f"{label}. Looked for: {candidates}. Available: {columns}"
+    )
 
 
 def load_candles_xlsx(path: str | Path) -> list[Candle]:
@@ -57,16 +99,26 @@ def load_candles_xlsx(path: str | Path) -> list[Candle]:
     normalized = {column: column.strip().lower() for column in frame.columns}
     columns = list(normalized.values())
 
-    timestamp_col = _find_column(columns, ["timestamp", "time", "date", "datetime"])
-    open_col = _find_column(columns, ["open"])
-    high_col = _find_column(columns, ["high"])
-    low_col = _find_column(columns, ["low"])
-    close_col = _find_column(columns, ["close"])
+    timestamp_col = _find_column(
+        columns,
+        ["timestamp", "time", "date", "datetime"],
+        label="timestamp",
+    )
+    open_col = _find_column(columns, ["open", "o"], label="open")
+    high_col = _find_column(columns, ["high", "h"], label="high")
+    low_col = _find_column(columns, ["low", "l"], label="low")
+    close_col = _find_column(columns, ["close", "c"], label="close")
     volume_candidates = [name for name in columns if name in {"volume", "vol"}]
     volume_col = volume_candidates[0] if volume_candidates else None
 
     reverse_lookup = {value: key for key, value in normalized.items()}
     candles: list[Candle] = []
+    print(
+        "Loaded XLSX candles from "
+        f"{path} | timestamp={timestamp_col}, open={open_col}, high={high_col}, "
+        f"low={low_col}, close={close_col}, volume={volume_col or 'n/a'} | "
+        f"rows={len(frame)}"
+    )
     for _, row in frame.iterrows():
         timestamp_value = row[reverse_lookup[timestamp_col]]
         timestamp = (
