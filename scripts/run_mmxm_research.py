@@ -9,9 +9,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.analysis import rank_summaries, summarize, summarize_combinations  # noqa: E402
+from src.analysis import (  # noqa: E402
+    DEFAULT_MIN_TRADES,
+    rank_summaries,
+    summarize,
+    summarize_combinations,
+)
 from src.backtest import run_backtest  # noqa: E402
 from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.order_blocks import tradability_failure_counts  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
 
 
@@ -59,7 +65,10 @@ def _write_summaries(trades, runs_dir: Path, label: str) -> None:
         trades, lambda t: "Tradable" if t.ob_tradable else "NonTradable", "OB"
     )
     by_combo = summarize_combinations(trades)
-    ranking = rank_summaries(by_combo)
+    min_trades = DEFAULT_MIN_TRADES
+    ranking_base = [row for row in by_combo if row.trades >= min_trades]
+    small_sample = [row for row in by_combo if row.trades < min_trades]
+    ranking = rank_summaries(ranking_base)
 
     write_summary_csv(by_phase, runs_dir / f"summary_by_phase_{label}.csv")
     write_summary_csv(by_entry, runs_dir / f"summary_by_entry_{label}.csv")
@@ -82,6 +91,31 @@ def _write_summaries(trades, runs_dir: Path, label: str) -> None:
     print("\nCombined Ranking")
     for row in ranking:
         print(row)
+    if small_sample:
+        print(f"\nSmall-sample combos (< {min_trades} trades)")
+        for row in small_sample:
+            print(row)
+
+
+def _print_ob_debug(order_blocks, instrument: str) -> None:
+    total = len(order_blocks)
+    tradable = sum(1 for block in order_blocks if block.tradable)
+    nontradable = total - tradable
+    ratio = tradable / total if total else 0.0
+    print(
+        "\nOB Debug",
+        f"{instrument}: ob_total={total}",
+        f"ob_tradable={tradable}",
+        f"ob_nontradable={nontradable}",
+        f"tradable_ratio={ratio:.2%}",
+    )
+    if total and tradable == 0:
+        failures = tradability_failure_counts(order_blocks)
+        top_three = failures.most_common(3)
+        if top_three:
+            print("Top tradability failure reasons:")
+            for reason, count in top_three:
+                print(f"  - {reason}: {count}")
 
 
 def _run_instrument(path: Path, runs_dir: Path) -> None:
@@ -89,6 +123,7 @@ def _run_instrument(path: Path, runs_dir: Path) -> None:
     print(f"\n=== {instrument} ({path.name}) ===")
     candles = _load_candles(path)
     result = run_backtest(candles)
+    _print_ob_debug(result.order_blocks, instrument)
     label = instrument.lower()
 
     write_trades_csv(result, runs_dir / f"trades_{label}.csv")

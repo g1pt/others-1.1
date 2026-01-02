@@ -8,6 +8,10 @@ from typing import Callable, Iterable
 from src.models import Trade
 
 
+DEFAULT_DRAWDOWN_PENALTY = 0.01
+DEFAULT_MIN_TRADES = 30
+
+
 @dataclass(frozen=True)
 class SummaryRow:
     key: str
@@ -84,8 +88,24 @@ def summarize_combinations(trades: list[Trade]) -> list[SummaryRow]:
 
 
 def rank_summaries(rows: list[SummaryRow]) -> list[SummaryRow]:
-    """Rank summaries by stability, expectancy, and drawdown."""
+    """Rank summaries by expectancy, drawdown penalty, and stability."""
+    return rank_summaries_with_penalty(rows, DEFAULT_DRAWDOWN_PENALTY)
+
+
+def rank_summaries_with_penalty(
+    rows: list[SummaryRow], drawdown_penalty: float
+) -> list[SummaryRow]:
+    """Rank summaries by composite score with drawdown penalty."""
+    def score(row: SummaryRow) -> float:
+        return row.expectancy - (drawdown_penalty * row.max_drawdown)
+
     return sorted(
         rows,
-        key=lambda row: (-row.stability, -row.expectancy, row.max_drawdown, row.key),
+        key=lambda row: (
+            -score(row),
+            -row.expectancy,
+            row.max_drawdown,
+            -row.stability,
+            row.key,
+        ),
     )
