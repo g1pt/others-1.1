@@ -59,6 +59,3 @@ def main() -> None:
     for row in by_combo:
         print(row)
 
-
-if __name__ == "__main__":
-    main()
