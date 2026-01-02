@@ -3,11 +3,16 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import sys
 
-from src.analysis import rank_summaries, summarize, summarize_combinations
-from src.backtest import run_backtest
-from src.data import Candle, load_candles_csv, load_candles_xlsx
-from src.report import write_summary_csv, write_trades_csv
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.analysis import rank_summaries, summarize, summarize_combinations  # noqa: E402
+from src.backtest import run_backtest  # noqa: E402
+from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.report import write_summary_csv, write_trades_csv  # noqa: E402
 
 
 def _data_roots() -> list[Path]:
