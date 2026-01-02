@@ -46,3 +46,35 @@ def iter_timeframe(candles: Iterable[Candle], timeframe_minutes: int) -> list[Ca
     """Placeholder for timeframe aggregation."""
     _ = timeframe_minutes
     return list(candles)
+
+
+def generate_synthetic_candles(length: int = 240) -> list[Candle]:
+    """Generate deterministic synthetic candles for reproducible research runs."""
+    candles: list[Candle] = []
+    price = 100.0
+    for idx in range(length):
+        phase = idx % 60
+        if phase < 20:
+            drift = 0.02
+        elif phase < 30:
+            drift = -0.15
+        elif phase < 50:
+            drift = 0.25
+        else:
+            drift = -0.05
+        open_price = price
+        close = price + drift
+        high = max(open_price, close) + 0.2
+        low = min(open_price, close) - 0.2
+        candles.append(
+            Candle(
+                timestamp=f"2023-01-01T{idx:02d}:00:00Z",
+                open=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=1000.0 + idx,
+            )
+        )
+        price = close
+    return candles
