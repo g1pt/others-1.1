@@ -1,6 +1,7 @@
 """Run MMXM research over all CSV/XLSX files in /data."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import re
 import sys
@@ -9,9 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.analysis import rank_summaries, summarize, summarize_combinations  # noqa: E402
+from src.analysis import (  # noqa: E402
+    rank_summaries,
+    summarize,
+    summarize_combinations,
+    summarize_day_labels,
+)
 from src.backtest import run_backtest  # noqa: E402
 from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.day_context import label_days, label_for_timestamp  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
 
 
@@ -84,12 +91,89 @@ def _write_summaries(trades, runs_dir: Path, label: str) -> None:
         print(row)
 
 
+def _is_spx500_dataset(path: Path) -> bool:
+    targets = {"forexcom_spx500, 15.csv", "fx_spx500, 60.csv"}
+    return path.name.lower() in targets
+
+
+def _apply_day_labels(trades, day_context) -> list:
+    labeled = []
+    for trade in trades:
+        day_label = label_for_timestamp(trade.entry_time, day_context)
+        labeled.append(replace(trade, day_label=day_label))
+    return labeled
+
+
+def _print_day_context(trades, day_context) -> None:
+    label_counts: dict[str, int] = {}
+    for metrics in day_context.values():
+        label_counts[metrics.label] = label_counts.get(metrics.label, 0) + 1
+
+    print("\nDay Label Counts")
+    for label, count in sorted(label_counts.items()):
+        print(f"{label}: {count}")
+
+    risk_trades = [trade for trade in trades if trade.entry_method == "Risk Entry"]
+    if not risk_trades:
+        print("\nNo Risk Entry trades found for day label summary.")
+        return
+
+    risk_summary = summarize_day_labels(risk_trades)
+    print("\nRisk Entry Expectancy by Day Label")
+    for row in risk_summary:
+        print(row)
+
+    worst = min(risk_summary, key=lambda row: row.expectancy)
+    print(
+        "\nWorst Risk Entry Label: "
+        f"{worst.key} (trades={worst.trades}, expectancy={worst.expectancy:.4f})"
+    )
+
+
+def _print_risk_entry_failure_analysis(trades) -> None:
+    risk_trades = [trade for trade in trades if trade.entry_method == "Risk Entry"]
+    if not risk_trades:
+        print("\nRisk Entry Failure Analysis: No Risk Entry trades.")
+        return
+
+    summary = summarize_day_labels(risk_trades)
+    sorted_by_expectancy = sorted(summary, key=lambda row: row.expectancy)
+    worst_labels = sorted_by_expectancy[:3]
+    best_labels = list(reversed(sorted_by_expectancy[-3:]))
+
+    print("\nRisk Entry Failure Analysis")
+    for row in summary:
+        print(row)
+    print("\nTop 3 Worst Day Labels (Risk Entry Expectancy)")
+    for row in worst_labels:
+        print(row)
+    print("\nTop 3 Best Day Labels (Risk Entry Expectancy)")
+    for row in best_labels:
+        print(row)
+
+
 def _run_instrument(path: Path, runs_dir: Path) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
     candles = _load_candles(path)
     result = run_backtest(candles)
     label = instrument.lower()
+
+    if _is_spx500_dataset(path):
+        day_context = label_days(candles)
+        trades = _apply_day_labels(result.trades, day_context)
+        result = replace(result, trades=trades)
+        write_summary_csv(
+            summarize_day_labels(trades),
+            runs_dir / f"summary_by_daylabel_{label}.csv",
+        )
+        risk_trades = [trade for trade in trades if trade.entry_method == "Risk Entry"]
+        write_summary_csv(
+            summarize_day_labels(risk_trades),
+            runs_dir / f"risk_entry_by_daylabel_{label}.csv",
+        )
+        _print_day_context(trades, day_context)
+        _print_risk_entry_failure_analysis(trades)
 
     write_trades_csv(result, runs_dir / f"trades_{label}.csv")
     _write_summaries(result.trades, runs_dir, label)

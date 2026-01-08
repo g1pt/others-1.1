@@ -1,0 +1,12 @@
+"""Configuration defaults for research runs."""
+from __future__ import annotations
+
+ATR_PERIOD = 14
+OPEN_REVISIT_TOL_ATR = 0.15
+TREND_MIN_RANGE_ATR = 1.0
+RANGE_MAX_RANGE_ATR = 0.8
+NYO_TIME_LOCAL = "14:30"
+LC_TIME_LOCAL = "17:00"
+REV_WINDOW_MIN = 60
+CHAOS_MIN_OPEN_REVISITS = 3
+CHAOS_REQUIRE_BOTH_SWEEPS = True

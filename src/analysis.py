@@ -83,6 +83,10 @@ def summarize_combinations(trades: list[Trade]) -> list[SummaryRow]:
     )
 
 
+def summarize_day_labels(trades: list[Trade]) -> list[SummaryRow]:
+    return summarize(trades, lambda t: t.day_label or "UNKNOWN", "DayLabel")
+
+
 def rank_summaries(rows: list[SummaryRow]) -> list[SummaryRow]:
     """Rank summaries by stability, expectancy, and drawdown."""
     return sorted(
