@@ -16,3 +16,4 @@ class Trade:
     exit_time: str | None = None
     exit_price: float | None = None
     pnl_r: float | None = None
+    day_label: str | None = None
