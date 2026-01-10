@@ -24,3 +24,4 @@ others-1.1/
 - `docs/mmxm_checklist_tradingplan.md` — MMXM checklist + tradingplan (NL).
 - `docs/mmxm_research_spec_v1.md` — MMXM research specification (v1, NL).
 - `docs/smart_money_entry_types_questions.md` — Smart Money Entry Types research questions (NL).
+- `docs/codex_filtering_strategy.md` — Codex filter prompt for expectancy/trade-count screening (NL).
