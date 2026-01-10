@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,21 @@ class ComboSummary:
     expectancy: float
     max_drawdown: float
     stability: float
+
+
+@dataclass(frozen=True)
+class ComboDecision:
+    combo: str
+    instrument: str
+    timeframe: int
+    mmxm_phase: str
+    day_label: str
+    trades: int
+    winrate: float
+    expectancy: float
+    max_drawdown: float
+    stability: float
+    status: str
 
 
 def _data_roots() -> list[Path]:
@@ -191,6 +207,59 @@ def _write_summary(rows: list[ComboSummary], path: Path) -> None:
             )
 
 
+def _write_decisions_csv(rows: list[ComboDecision], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "combo",
+                "instrument",
+                "timeframe",
+                "mmxm_phase",
+                "day_label",
+                "trades",
+                "winrate",
+                "expectancy",
+                "max_drawdown",
+                "stability",
+                "status",
+            ]
+        )
+        for row in rows:
+            writer.writerow(
+                [
+                    row.combo,
+                    row.instrument,
+                    row.timeframe,
+                    row.mmxm_phase,
+                    row.day_label,
+                    row.trades,
+                    f"{row.winrate:.4f}",
+                    f"{row.expectancy:.4f}",
+                    f"{row.max_drawdown:.4f}",
+                    f"{row.stability:.4f}",
+                    row.status,
+                ]
+            )
+
+
+def _write_decisions_json(rows: list[ComboDecision], path: Path) -> None:
+    payload = [
+        {
+            "combo": row.combo,
+            "trades": row.trades,
+            "expectancy": row.expectancy,
+            "drawdown": row.max_drawdown,
+            "stability": row.stability,
+            "status": row.status,
+        }
+        for row in rows
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _write_common_summary(rows: list[ComboSummary], path: Path) -> None:
     counts = {
         "phase": {},
@@ -211,6 +280,51 @@ def _write_common_summary(rows: list[ComboSummary], path: Path) -> None:
         for dimension in ["phase", "instrument", "timeframe"]:
             for value, count in sorted(counts[dimension].items()):
                 writer.writerow([dimension, value, count])
+
+
+def _write_status_summary(rows: list[ComboDecision], path: Path) -> None:
+    counts: dict[str, int] = {"Toegestaan": 0, "Voorzichtig": 0, "Afgekeurd": 0}
+    for row in rows:
+        counts[row.status] = counts.get(row.status, 0) + 1
+
+    allowed_expectancies = [row.expectancy for row in rows if row.status == "Toegestaan"]
+    avg_expectancy = (
+        sum(allowed_expectancies) / len(allowed_expectancies)
+        if allowed_expectancies
+        else None
+    )
+
+    highest_by_instrument: dict[str, dict[str, object]] = {}
+    for row in rows:
+        current = highest_by_instrument.get(row.instrument)
+        if current is None or row.stability > float(current["stability"]):
+            highest_by_instrument[row.instrument] = {
+                "combo": row.combo,
+                "stability": row.stability,
+                "expectancy": row.expectancy,
+                "trades": row.trades,
+                "status": row.status,
+            }
+
+    summary = {
+        "status_counts": counts,
+        "avg_expectancy_toegestaan": avg_expectancy,
+        "highest_stability_by_instrument": highest_by_instrument,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _status_for(row: ComboSummary) -> str:
+    if row.max_drawdown < 10 and row.stability > 0.4:
+        return "Toegestaan"
+    if row.max_drawdown < 5 and row.stability > 0.39:
+        return "Voorzichtig"
+    return "Afgekeurd"
+
+
+def _combo_label(row: ComboSummary) -> str:
+    return f"{row.mmxm_phase} | Risk Entry | {row.instrument} | {row.timeframe}m"
 
 
 def _plot_expectancy_drawdown(rows: list[ComboSummary], path: Path) -> None:
@@ -310,26 +424,39 @@ def main() -> None:
     all_summaries = _summarize(records)
     _write_summary(all_summaries, runs_dir / "risk_entry_combos_all.csv")
 
-    filtered = [
-        row
-        for row in all_summaries
-        if row.expectancy > 0 and row.trades >= 20
-    ]
+    filtered = [row for row in all_summaries if row.expectancy > 0 and row.trades >= 20]
     _write_summary(filtered, runs_dir / "risk_entry_combos_filtered.csv")
 
-    decision = [
-        row for row in filtered if row.max_drawdown < 10 and row.stability > 0.4
+    decisions = [
+        ComboDecision(
+            combo=_combo_label(row),
+            instrument=row.instrument,
+            timeframe=row.timeframe,
+            mmxm_phase=row.mmxm_phase,
+            day_label=row.day_label,
+            trades=row.trades,
+            winrate=row.winrate,
+            expectancy=row.expectancy,
+            max_drawdown=row.max_drawdown,
+            stability=row.stability,
+            status=_status_for(row),
+        )
+        for row in filtered
     ]
-    _write_summary(decision, runs_dir / "risk_entry_combos_decision.csv")
-    _write_common_summary(decision, runs_dir / "risk_entry_combo_summary.csv")
+    _write_decisions_csv(decisions, runs_dir / "risk_entry_combos_filtered_status.csv")
+    _write_decisions_json(decisions, runs_dir / "risk_entry_combos_filtered_status.json")
+    _write_status_summary(decisions, runs_dir / "risk_entry_combos_status_summary.json")
+    allowed = [row for row in filtered if _status_for(row) == "Toegestaan"]
+    _write_summary(allowed, runs_dir / "risk_entry_combos_toegestaan.csv")
+    _write_common_summary(allowed, runs_dir / "risk_entry_combo_summary.csv")
     _plot_expectancy_drawdown(
-        decision,
+        allowed,
         runs_dir / "risk_entry_expectancy_drawdown.png",
     )
 
     print(f"All combos: {len(all_summaries)}")
     print(f"Filtered (expectancy>0 & trades>=20): {len(filtered)}")
-    print(f"Decision (drawdown<10 & stability>0.4): {len(decision)}")
+    print(f"Allowed (drawdown<10 & stability>0.4): {len(allowed)}")
     print(f"Outputs written to {runs_dir}")
 
 
