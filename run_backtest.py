@@ -6,9 +6,12 @@ from pathlib import Path
 
 from src.analysis import summarize, summarize_combinations
 from src.backtest import run_backtest
+from src.config import INITIAL_EQUITY, RISK_PER_TRADE
 from src.data import generate_synthetic_candles, load_candles_csv
 from src.filtering import load_combo_filter
 from src.report import write_summary_csv, write_trades_csv
+from src.reporting import leakage_contribution_report, leakage_report
+from src.risk import simulate_equity
 
 
 def _ensure_sample_data(path: Path) -> None:
@@ -31,6 +34,18 @@ def main() -> None:
         "--combo-filter",
         type=Path,
         help="Path to a JSON file containing combo summaries for whitelist filtering.",
+    )
+    parser.add_argument(
+        "--initial-equity",
+        type=float,
+        default=INITIAL_EQUITY,
+        help="Starting equity for the equity curve simulation.",
+    )
+    parser.add_argument(
+        "--risk-per-trade",
+        type=float,
+        default=RISK_PER_TRADE,
+        help="Risk per trade as a fraction of equity.",
     )
     args = parser.parse_args()
 
@@ -69,3 +84,23 @@ def main() -> None:
     print("\nSummary by Combination")
     for row in by_combo:
         print(row)
+
+    print()
+    print(leakage_report(result.trades))
+
+    equity = simulate_equity(
+        result.trades,
+        initial_equity=args.initial_equity,
+        risk_per_trade=args.risk_per_trade,
+    )
+    print("\nEquity Curve Summary")
+    print(f"initial_equity={equity.initial_equity:.2f}")
+    print(f"final_equity={equity.final_equity:.2f}")
+    print(f"return_pct={equity.return_pct:.2f}%")
+    print(f"max_drawdown_pct={equity.max_drawdown_pct:.2f}%")
+    print(f"max_drawdown_currency={equity.max_drawdown_currency:.2f}")
+    if equity.skipped_trades:
+        print(f"skipped_trades={len(equity.skipped_trades)}")
+
+    print()
+    print(leakage_contribution_report(equity.trade_results))

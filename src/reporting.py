@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 
 from src.models import Trade
+from src.risk import TradeResult
 
 
 def leakage_report(trades: list[Trade]) -> str:
@@ -42,6 +44,99 @@ def leakage_report(trades: list[Trade]) -> str:
         _format_cross(_cross_counts(trades, _normalize_phase, _normalize_tradable))
     )
 
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ContributionRow:
+    key: str
+    trades: int
+    total_pnl: float
+    total_r: float | None
+    expectancy: float
+    contribution_pct: float
+
+
+@dataclass(frozen=True)
+class ContributionBucket:
+    title: str
+    rows: list[ContributionRow]
+
+
+def leakage_contribution_stats(
+    trade_results: list[TradeResult],
+) -> list[ContributionBucket]:
+    total_pnl = sum(result.pnl for result in trade_results)
+    has_r = any(result.pnl_r is not None for result in trade_results)
+    buckets = [
+        ("By EntryType", lambda trade: _normalize_entry(trade)),
+        ("By OB Tradability", lambda trade: _normalize_tradable(trade)),
+        ("By Phase", lambda trade: _normalize_phase(trade)),
+        (
+            "By Phase x EntryType",
+            lambda trade: f"{_normalize_phase(trade)} | {_normalize_entry(trade)}",
+        ),
+        (
+            "By Tradable x EntryType",
+            lambda trade: f"{_normalize_tradable(trade)} | {_normalize_entry(trade)}",
+        ),
+    ]
+
+    bucket_rows: list[ContributionBucket] = []
+    for title, key_fn in buckets:
+        grouped: dict[str, list[TradeResult]] = {}
+        for result in trade_results:
+            key = key_fn(result.trade)
+            grouped.setdefault(key, []).append(result)
+        rows: list[ContributionRow] = []
+        for key, results in grouped.items():
+            trades = len(results)
+            pnl = sum(result.pnl for result in results)
+            total_r = sum(result.pnl_r or 0.0 for result in results) if has_r else None
+            expectancy = pnl / trades if trades else 0.0
+            contribution_pct = (pnl / total_pnl * 100) if total_pnl else 0.0
+            rows.append(
+                ContributionRow(
+                    key=key,
+                    trades=trades,
+                    total_pnl=pnl,
+                    total_r=total_r,
+                    expectancy=expectancy,
+                    contribution_pct=contribution_pct,
+                )
+            )
+        rows.sort(key=lambda row: (-row.total_pnl, row.key))
+        bucket_rows.append(ContributionBucket(title=title, rows=rows))
+    return bucket_rows
+
+
+def leakage_contribution_report(trade_results: list[TradeResult]) -> str:
+    stats = leakage_contribution_stats(trade_results)
+    has_r = any(result.pnl_r is not None for result in trade_results)
+    lines = ["Leakage Contribution Report"]
+    header = (
+        "key | trades | total_pnl | total_R | expectancy | contribution%"
+        if has_r
+        else "key | trades | total_pnl | expectancy | contribution%"
+    )
+
+    for bucket in stats:
+        lines.extend(["", bucket.title, header])
+        if not bucket.rows:
+            lines.append("No trades")
+            continue
+        for row in bucket.rows:
+            if has_r:
+                total_r = f"{row.total_r:.2f}" if row.total_r is not None else "NA"
+                lines.append(
+                    f"{row.key} | {row.trades} | {row.total_pnl:.2f} | "
+                    f"{total_r} | {row.expectancy:.2f} | {row.contribution_pct:.1f}%"
+                )
+            else:
+                lines.append(
+                    f"{row.key} | {row.trades} | {row.total_pnl:.2f} | "
+                    f"{row.expectancy:.2f} | {row.contribution_pct:.1f}%"
+                )
     return "\n".join(lines)
 
 
