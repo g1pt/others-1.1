@@ -63,7 +63,14 @@ def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[
             near_level = abs(candle.high - swing_high) / candle.close < 0.005
         near_level = near_level or after_sweep
 
-        tradable = all([has_imbalance, has_bos, near_level])
+        fail_reasons = []
+        if not has_imbalance:
+            fail_reasons.append("no_fvg")
+        if not has_bos:
+            fail_reasons.append("no_bos")
+        if not near_level:
+            fail_reasons.append("not_near_level")
+        tradable = len(fail_reasons) == 0
 
         order_blocks.append(
             OrderBlock(
@@ -82,6 +89,7 @@ def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[
                 near_level=near_level,
                 after_sweep=after_sweep,
                 tradable=tradable,
+                fail_reasons=fail_reasons,
             )
         )
         ob_id += 1

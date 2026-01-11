@@ -23,6 +23,12 @@ from src.models import Candle
 from src.day_context import label_days, label_for_timestamp  # noqa: E402
 from src.filtering import load_combo_filter  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
+from src.research.reporting import ob_failure_counts, top_candidates  # noqa: E402
+
+DEFAULT_DATASETS = {
+    "fx_spx500, 15.csv",
+    "fx_spx500, 30.csv",
+}
 
 
 def _data_roots() -> list[Path]:
@@ -39,12 +45,14 @@ def _data_roots() -> list[Path]:
     return result
 
 
-def _find_data_files() -> list[Path]:
+def _find_data_files(include_all: bool) -> list[Path]:
     files: list[Path] = []
     for root in _data_roots():
         files.extend(sorted(root.glob("*.csv")))
         files.extend(sorted(root.glob("*.xlsx")))
-    return files
+    if include_all:
+        return files
+    return [path for path in files if path.name.lower() in DEFAULT_DATASETS]
 
 
 def _instrument_from_path(path: Path) -> str:
@@ -70,6 +78,7 @@ def _write_summaries(trades, runs_dir: Path, label: str) -> None:
     )
     by_combo = summarize_combinations(trades)
     ranking = rank_summaries(by_combo)
+    candidates = top_candidates(by_combo)
 
     write_summary_csv(by_phase, runs_dir / f"summary_by_phase_{label}.csv")
     write_summary_csv(by_entry, runs_dir / f"summary_by_entry_{label}.csv")
@@ -92,11 +101,13 @@ def _write_summaries(trades, runs_dir: Path, label: str) -> None:
     print("\nCombined Ranking")
     for row in ranking:
         print(row)
+    print("\nTop Candidates (filtered)")
+    for row in candidates:
+        print(row)
 
 
 def _is_spx500_dataset(path: Path) -> bool:
-    targets = {"forexcom_spx500, 15.csv", "fx_spx500, 60.csv"}
-    return path.name.lower() in targets
+    return path.name.lower() in DEFAULT_DATASETS
 
 
 def _apply_day_labels(trades, day_context) -> list:
@@ -161,6 +172,14 @@ def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
     candles = _load_candles(path)
     result = run_backtest(candles, combo_filter=combo_filter)
     label = instrument.lower()
+    failure_counts = ob_failure_counts(result.order_blocks)
+    print("\nOB Tradability Failure Counts")
+    print(f"total={failure_counts['total']}")
+    print(f"tradable={failure_counts['tradable']}")
+    print(f"nontradable={failure_counts['nontradable']}")
+    print(f"no_fvg={failure_counts['no_fvg']}")
+    print(f"no_bos={failure_counts['no_bos']}")
+    print(f"not_near_level={failure_counts['not_near_level']}")
 
     if _is_spx500_dataset(path):
         day_context = label_days(candles)
@@ -191,12 +210,17 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to a JSON file containing combo summaries for whitelist filtering.",
     )
+    parser.add_argument(
+        "--all-datasets",
+        action="store_true",
+        help="Run research on all CSV/XLSX files instead of the default SPX500 15/30 set.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    files = _find_data_files()
+    files = _find_data_files(args.all_datasets)
     if not files:
         raise SystemExit("No CSV/XLSX files found in /data or ./data")
 

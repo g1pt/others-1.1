@@ -1,7 +1,7 @@
 """Shared data models for research runs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class OrderBlock:
     near_level: bool
     after_sweep: bool
     tradable: bool
+    fail_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
