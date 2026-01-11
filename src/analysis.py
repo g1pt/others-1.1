@@ -87,9 +87,26 @@ def summarize_day_labels(trades: list[Trade]) -> list[SummaryRow]:
     return summarize(trades, lambda t: t.day_label or "UNKNOWN", "DayLabel")
 
 
+def select_candidates(
+    rows: list[SummaryRow],
+    min_trades: int = 25,
+    min_expectancy: float = 0.0,
+    max_dd: float | None = None,
+) -> list[SummaryRow]:
+    """Filter candidate summary rows by trade count, expectancy, and drawdown."""
+    filtered = [
+        row
+        for row in rows
+        if row.trades >= min_trades and row.expectancy >= min_expectancy
+    ]
+    if max_dd is not None:
+        filtered = [row for row in filtered if row.max_drawdown <= max_dd]
+    return filtered
+
+
 def rank_summaries(rows: list[SummaryRow]) -> list[SummaryRow]:
-    """Rank summaries by stability, expectancy, and drawdown."""
+    """Rank summaries by expectancy, drawdown, stability, and key."""
     return sorted(
         rows,
-        key=lambda row: (-row.stability, -row.expectancy, row.max_drawdown, row.key),
+        key=lambda row: (-row.expectancy, row.max_drawdown, -row.stability, row.key),
     )
