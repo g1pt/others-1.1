@@ -1,29 +1,7 @@
 """Order block detection and classification."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from src.data import Candle
-from src.mmxm import MmxmPhase
-
-
-@dataclass(frozen=True)
-class OrderBlock:
-    ob_id: int
-    index: int
-    timestamp: str
-    direction: str
-    open: float
-    high: float
-    low: float
-    close: float
-    range: float
-    impulse_end: int
-    has_imbalance: bool
-    has_bos: bool
-    near_level: bool
-    after_sweep: bool
-    tradable: bool
+from src.models import Candle, MmxmPhase, OrderBlock
 
 
 def _swing_levels(candles: list[Candle], idx: int, lookback: int = 5) -> tuple[float, float]:

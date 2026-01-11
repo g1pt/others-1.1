@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.data import Candle
+from src.models import Candle
 from src.mmxm import MmxmPhase
 from src.order_blocks import OrderBlock
 
