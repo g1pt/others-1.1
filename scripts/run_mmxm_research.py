@@ -30,6 +30,9 @@ DEFAULT_DATASETS = {
     "fx_spx500, 15.csv",
     "fx_spx500, 30.csv",
 }
+INITIAL_EQUITY = 10000.0
+RISK_PER_TRADE = 0.01
+UNIT_PNL_MODE = "R"
 
 
 def _data_roots() -> list[Path]:
@@ -167,6 +170,194 @@ def _print_risk_entry_failure_analysis(trades) -> None:
         print(row)
 
 
+def _normalize_entry_type(trade) -> str:
+    raw = str(getattr(trade, "entry_method", "") or "").strip()
+    value = raw.replace("Entry:", "").strip()
+    return value or "Unknown"
+
+
+def _normalize_tradability(trade) -> str:
+    raw = getattr(trade, "ob_tradable", None)
+    if raw is True:
+        return "Tradable"
+    if raw is False:
+        return "NonTradable"
+    return "Unknown"
+
+
+def _normalize_phase(trade) -> str:
+    raw = str(getattr(trade, "mmxm_phase", "") or "").strip()
+    if not raw:
+        return "Unknown"
+    mapping = {
+        "accumulation": "Accumulation",
+        "manipulation": "Manipulation",
+        "distribution": "Distribution",
+    }
+    return mapping.get(raw.lower(), raw)
+
+
+def _trade_return_units(trade) -> tuple[float | None, str]:
+    if trade.pnl_r is not None:
+        return trade.pnl_r, "R"
+    if trade.stop_price is None or trade.exit_price is None:
+        return None, "Unknown"
+    if trade.direction == "bullish":
+        stop_distance = trade.entry_price - trade.stop_price
+        if stop_distance <= 0:
+            return None, "Unknown"
+        return (trade.exit_price - trade.entry_price) / stop_distance, "R"
+    if trade.direction == "bearish":
+        stop_distance = trade.stop_price - trade.entry_price
+        if stop_distance <= 0:
+            return None, "Unknown"
+        return (trade.entry_price - trade.exit_price) / stop_distance, "R"
+    return None, "Unknown"
+
+
+def _trade_points_units(trade) -> float | None:
+    if trade.exit_price is None:
+        return None
+    if trade.direction == "bullish":
+        return trade.exit_price - trade.entry_price
+    if trade.direction == "bearish":
+        return trade.entry_price - trade.exit_price
+    return None
+
+
+def _simulate_equity_and_contribution(trades) -> None:
+    # Step 4B: Equity + Contribution
+    equity = INITIAL_EQUITY
+    peak_equity = equity
+    max_drawdown = 0.0
+    trade_results: list[dict] = []
+    missing_pnl = 0
+
+    for trade in sorted(trades, key=lambda t: t.entry_time):
+        if UNIT_PNL_MODE == "POINTS":
+            trade_points = _trade_points_units(trade)
+            if trade_points is None:
+                missing_pnl += 1
+                continue
+            trade_return = trade_points
+            mode = "POINTS"
+        else:
+            trade_return, mode = _trade_return_units(trade)
+            if trade_return is None:
+                trade_points = _trade_points_units(trade)
+                if trade_points is None:
+                    missing_pnl += 1
+                    continue
+                trade_return = trade_points
+                mode = "POINTS"
+        pnl_cash = equity * RISK_PER_TRADE * trade_return
+        equity += pnl_cash
+        peak_equity = max(peak_equity, equity)
+        max_drawdown = max(max_drawdown, peak_equity - equity)
+        trade_results.append(
+            {
+                "trade": trade,
+                "return_units": trade_return,
+                "pnl_cash": pnl_cash,
+                "mode": mode,
+            }
+        )
+
+    trades_count = len(trade_results)
+    end_equity = equity
+    total_return_pct = (
+        (end_equity - INITIAL_EQUITY) / INITIAL_EQUITY * 100
+        if INITIAL_EQUITY
+        else 0.0
+    )
+    max_drawdown_pct = (max_drawdown / peak_equity * 100) if peak_equity else 0.0
+
+    print(
+        f"=== Equity Simulation (initial={INITIAL_EQUITY:.0f}, risk={RISK_PER_TRADE:.0%}) ==="
+    )
+    print(f"trades={trades_count}")
+    print(f"end_equity={end_equity:.2f}")
+    print(f"total_return_pct={total_return_pct:.2f}")
+    print(f"max_drawdown_pct={max_drawdown_pct:.2f}")
+
+    total_pnl_cash = sum(result["pnl_cash"] for result in trade_results)
+
+    def _bucket_contribution(key_fn):
+        grouped: dict[str, list[dict]] = {}
+        for result in trade_results:
+            key = key_fn(result["trade"])
+            grouped.setdefault(key, []).append(result)
+        rows = []
+        for key, results in grouped.items():
+            trades = len(results)
+            total_pnl_units = sum(result["return_units"] for result in results)
+            pnl_cash = sum(result["pnl_cash"] for result in results)
+            contribution_pct = (pnl_cash / total_pnl_cash * 100) if total_pnl_cash else 0.0
+            rows.append(
+                {
+                    "key": key,
+                    "trades": trades,
+                    "total_pnl_units": total_pnl_units,
+                    "pnl_cash": pnl_cash,
+                    "contribution_pct": contribution_pct,
+                }
+            )
+        rows.sort(key=lambda row: (-row["contribution_pct"], -row["trades"], row["key"]))
+        return rows
+
+    print("\n=== Leakage Contribution (profit share) ===")
+    print(f"Total pnl_cash={total_pnl_cash:.2f}")
+    print("-- By EntryType")
+    for row in _bucket_contribution(_normalize_entry_type):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- By OB Tradability")
+    for row in _bucket_contribution(_normalize_tradability):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- By Phase")
+    for row in _bucket_contribution(_normalize_phase):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- Cross: Phase x EntryType (top 10 only)")
+    for row in _bucket_contribution(
+        lambda trade: f"{_normalize_phase(trade)} | {_normalize_entry_type(trade)}"
+    )[:10]:
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- Cross: Tradable x EntryType")
+    for row in _bucket_contribution(
+        lambda trade: f"{_normalize_tradability(trade)} | {_normalize_entry_type(trade)}"
+    ):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- Cross: Phase x Tradable")
+    for row in _bucket_contribution(
+        lambda trade: f"{_normalize_phase(trade)} | {_normalize_tradability(trade)}"
+    ):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print(f"missing_pnl_trades={missing_pnl}")
+
+
 def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -205,6 +396,8 @@ def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
     _write_summaries(result.trades, runs_dir, label)
     print()
     print(leakage_report(result.trades))
+    print()
+    _simulate_equity_and_contribution(result.trades)
 
 
 def _parse_args() -> argparse.Namespace:
