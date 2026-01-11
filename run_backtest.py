@@ -1,11 +1,13 @@
 """Entry script to run the MMXM/Smart Money backtest."""
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from src.analysis import summarize, summarize_combinations
 from src.backtest import run_backtest
 from src.data import generate_synthetic_candles, load_candles_csv
+from src.filtering import load_combo_filter
 from src.report import write_summary_csv, write_trades_csv
 
 
@@ -24,10 +26,19 @@ def _ensure_sample_data(path: Path) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the MMXM/Smart Money backtest.")
+    parser.add_argument(
+        "--combo-filter",
+        type=Path,
+        help="Path to a JSON file containing combo summaries for whitelist filtering.",
+    )
+    args = parser.parse_args()
+
     data_path = Path("data/synthetic_candles.csv")
     _ensure_sample_data(data_path)
     candles = load_candles_csv(data_path)
-    result = run_backtest(candles)
+    combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
+    result = run_backtest(candles, combo_filter=combo_filter)
 
     runs_dir = Path("runs")
     runs_dir.mkdir(exist_ok=True)
@@ -58,4 +69,3 @@ def main() -> None:
     print("\nSummary by Combination")
     for row in by_combo:
         print(row)
-
