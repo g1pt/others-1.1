@@ -6,6 +6,7 @@ from typing import Iterable
 
 from src.data import Candle
 from src.entries import EntrySignal, generate_entries
+from src.filtering import ComboFilter, filter_entry_signals, infer_timeframe_minutes
 from src.mmxm import MmxmPhase, detect_mmxm_phases
 from src.models import Trade
 from src.order_blocks import OrderBlock, detect_order_blocks
@@ -20,12 +21,23 @@ class BacktestResult:
     entry_signals: list[EntrySignal]
 
 
-def run_backtest(candles: Iterable[Candle]) -> BacktestResult:
+def run_backtest(
+    candles: Iterable[Candle],
+    combo_filter: ComboFilter | None = None,
+    timeframe: str | None = None,
+) -> BacktestResult:
     """Run research backtest pipeline."""
     candle_list = list(candles)
     phases = detect_mmxm_phases(candle_list)
     order_blocks = detect_order_blocks(candle_list, phases)
     entries = generate_entries(candle_list, order_blocks, phases)
+    if combo_filter is not None:
+        if timeframe is None:
+            inferred = infer_timeframe_minutes(candle_list)
+            if inferred is None:
+                raise ValueError("Unable to infer timeframe for combo filtering.")
+            timeframe = f"{inferred}m"
+        entries = filter_entry_signals(entries, timeframe, combo_filter)
     trades = simulate_trades(candle_list, entries)
     return BacktestResult(
         trades=trades,

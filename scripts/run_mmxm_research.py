@@ -1,6 +1,7 @@
 """Run MMXM research over all CSV/XLSX files in /data."""
 from __future__ import annotations
 
+import argparse
 from dataclasses import replace
 from pathlib import Path
 import re
@@ -19,6 +20,7 @@ from src.analysis import (  # noqa: E402
 from src.backtest import run_backtest  # noqa: E402
 from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
 from src.day_context import label_days, label_for_timestamp  # noqa: E402
+from src.filtering import load_combo_filter  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
 
 
@@ -152,11 +154,11 @@ def _print_risk_entry_failure_analysis(trades) -> None:
         print(row)
 
 
-def _run_instrument(path: Path, runs_dir: Path) -> None:
+def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
     candles = _load_candles(path)
-    result = run_backtest(candles)
+    result = run_backtest(candles, combo_filter=combo_filter)
     label = instrument.lower()
 
     if _is_spx500_dataset(path):
@@ -179,7 +181,20 @@ def _run_instrument(path: Path, runs_dir: Path) -> None:
     _write_summaries(result.trades, runs_dir, label)
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run MMXM research over all CSV/XLSX files in /data."
+    )
+    parser.add_argument(
+        "--combo-filter",
+        type=Path,
+        help="Path to a JSON file containing combo summaries for whitelist filtering.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     files = _find_data_files()
     if not files:
         raise SystemExit("No CSV/XLSX files found in /data or ./data")
@@ -187,8 +202,10 @@ def main() -> None:
     runs_dir = Path("runs")
     runs_dir.mkdir(exist_ok=True)
 
+    combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
+
     for path in files:
-        _run_instrument(path, runs_dir)
+        _run_instrument(path, runs_dir, combo_filter)
 
 
 if __name__ == "__main__":

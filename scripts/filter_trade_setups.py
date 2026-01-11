@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 
 ALLOWED_INSTRUMENTS = {"EURUSD", "SPX500"}
-ALLOWED_TIMEFRAMES = {"15m", "30m", "60m"}
+ALLOWED_TIMEFRAMES = {"1m", "5m", "15m", "30m", "60m"}
 ALLOWED_PHASES = {"Accumulation", "Distribution"}
 ALLOWED_ENTRY_TYPES = {"Risk Entry", "Continuation"}
 
@@ -21,6 +21,7 @@ class StrategyRow:
     timeframe: str
     phase: str
     entry_type: str
+    ob_type: str
     expectancy: float
     max_drawdown: float
     stability: float
@@ -61,6 +62,28 @@ def _normalize_timeframe(value: Any) -> str | None:
     return None
 
 
+def _normalize_ob_type(record: dict[str, Any]) -> str | None:
+    raw = record.get("ob_type")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    tradable = record.get("ob_tradable")
+    if isinstance(tradable, str):
+        tradable = tradable.strip().lower() in {"true", "1", "yes"}
+    if isinstance(tradable, bool):
+        return "Tradable" if tradable else "NonTradable"
+    return None
+
+
+def _parse_combo_string(value: str) -> tuple[str, str, str] | None:
+    trimmed = value.strip()
+    if ":" in trimmed:
+        trimmed = trimmed.split(":", 1)[1]
+    parts = [part.strip() for part in trimmed.split("|") if part.strip()]
+    if len(parts) != 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
 def _coerce_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -80,6 +103,13 @@ def _to_row(record: dict[str, Any]) -> StrategyRow | None:
     timeframe = _normalize_timeframe(record.get("timeframe"))
     phase = record.get("phase")
     entry_type = record.get("entry_type")
+    ob_type = _normalize_ob_type(record)
+    if not (isinstance(phase, str) and isinstance(entry_type, str) and isinstance(ob_type, str)):
+        combo_value = record.get("combo") or record.get("key")
+        if isinstance(combo_value, str):
+            parsed = _parse_combo_string(combo_value)
+            if parsed is not None:
+                phase, entry_type, ob_type = parsed
     expectancy = _coerce_float(record.get("expectancy"))
     max_drawdown = _coerce_float(record.get("max_drawdown"))
     stability = _coerce_float(record.get("stability"))
@@ -91,6 +121,7 @@ def _to_row(record: dict[str, Any]) -> StrategyRow | None:
             isinstance(timeframe, str),
             isinstance(phase, str),
             isinstance(entry_type, str),
+            isinstance(ob_type, str),
             expectancy is not None,
             max_drawdown is not None,
             stability is not None,
@@ -104,6 +135,7 @@ def _to_row(record: dict[str, Any]) -> StrategyRow | None:
         timeframe=timeframe,
         phase=phase,
         entry_type=entry_type,
+        ob_type=ob_type,
         expectancy=expectancy,
         max_drawdown=max_drawdown,
         stability=stability,
@@ -124,9 +156,15 @@ def _is_allowed(row: StrategyRow) -> bool:
         return False
     if row.max_drawdown > 3.0:
         return False
-    if row.stability < 0.40:
-        return False
+    if row.timeframe == "60m":
+        if row.trades < 7:
+            return False
+        if row.stability < 0.38:
+            return False
+        return True
     if row.trades < 20:
+        return False
+    if row.stability < 0.40:
         return False
     return True
 
