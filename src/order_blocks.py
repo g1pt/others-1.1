@@ -13,13 +13,20 @@ def _swing_levels(candles: list[Candle], idx: int, lookback: int = 5) -> tuple[f
 
 
 def _has_fvg(candles: list[Candle], idx: int, direction: str) -> bool:
-    if idx + 2 >= len(candles):
+    if len(candles) < 3:
         return False
-    prev = candles[idx]
-    next_candle = candles[idx + 1]
-    if direction == "bullish":
-        return next_candle.low > prev.high
-    return next_candle.high < prev.low
+    start = max(1, idx - 3)
+    end = min(len(candles) - 2, idx + 3)
+    for j in range(start, end + 1):
+        prev = candles[j - 1]
+        next_candle = candles[j + 1]
+        if direction == "bullish":
+            if prev.high < next_candle.low:
+                return True
+        else:
+            if prev.low > next_candle.high:
+                return True
+    return False
 
 
 def detect_order_blocks(candles: list[Candle], phases: list[MmxmPhase]) -> list[OrderBlock]:

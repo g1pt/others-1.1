@@ -173,6 +173,9 @@ def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
     result = run_backtest(candles, combo_filter=combo_filter)
     label = instrument.lower()
     failure_counts = ob_failure_counts(result.order_blocks)
+    true_count = sum(1 for ob in result.order_blocks if ob.has_imbalance)
+    false_count = len(result.order_blocks) - true_count
+    print(f"FVG sanity: true_count={true_count} false_count={false_count}")
     print("\nOB Tradability Failure Counts")
     print(f"total={failure_counts['total']}")
     print(f"tradable={failure_counts['tradable']}")
