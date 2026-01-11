@@ -53,6 +53,7 @@ class Trade:
     entry_method: str
     ob_tradable: bool
     ob_id: int
+    stop_price: float | None = None
     exit_time: str | None = None
     exit_price: float | None = None
     pnl_r: float | None = None

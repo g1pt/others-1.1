@@ -10,12 +10,12 @@ from src.backtest import BacktestResult
 def write_trades_csv(result: BacktestResult, path: str | Path) -> None:
     """Write trades to CSV."""
     lines = [
-        "entry_time,entry_price,direction,mmxm_phase,entry_method,ob_tradable,ob_id,"
+        "entry_time,entry_price,stop_price,direction,mmxm_phase,entry_method,ob_tradable,ob_id,"
         "exit_time,exit_price,pnl_r,day_label"
     ]
     for trade in result.trades:
         lines.append(
-            f"{trade.entry_time},{trade.entry_price},{trade.direction},"
+            f"{trade.entry_time},{trade.entry_price},{trade.stop_price or ''},{trade.direction},"
             f"{trade.mmxm_phase},{trade.entry_method},{trade.ob_tradable},{trade.ob_id},"
             f"{trade.exit_time or ''},{trade.exit_price or ''},{trade.pnl_r or ''},"
             f"{trade.day_label or ''}"

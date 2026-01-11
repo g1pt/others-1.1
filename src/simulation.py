@@ -60,6 +60,7 @@ def simulate_trades(
             Trade(
                 entry_time=entry_candle.timestamp,
                 entry_price=entry.entry_price,
+                stop_price=entry.stop_price,
                 direction=entry.direction,
                 mmxm_phase=entry.mmxm_phase,
                 entry_method=entry.method,
