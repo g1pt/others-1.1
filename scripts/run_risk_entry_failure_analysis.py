@@ -12,7 +12,8 @@ from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from src.backtest import run_backtest
-from src.data import Candle, load_candles_csv, load_candles_xlsx
+from src.data import load_candles_csv, load_candles_xlsx
+from src.models import Candle
 from src.day_context import DayContextMetrics, label_days
 from src.mmxm import MmxmPhase
 from src.models import Trade

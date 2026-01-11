@@ -18,7 +18,8 @@ from src.analysis import (  # noqa: E402
     summarize_day_labels,
 )
 from src.backtest import run_backtest  # noqa: E402
-from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.data import load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.models import Candle
 from src.day_context import label_days, label_for_timestamp  # noqa: E402
 from src.filtering import load_combo_filter  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402

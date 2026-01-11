@@ -17,7 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from src.backtest import run_backtest  # noqa: E402
-from src.data import Candle, load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.data import load_candles_csv, load_candles_xlsx  # noqa: E402
+from src.models import Candle
 from src.day_context import label_days, label_for_timestamp  # noqa: E402
 
 

@@ -17,7 +17,7 @@ from src.config import (
     REV_WINDOW_MIN,
     TREND_MIN_RANGE_ATR,
 )
-from src.data import Candle
+from src.models import Candle
 
 SWEEP_LOOKBACK = 3
 CHAOS_MAX_RANGE_ATR = 1.2

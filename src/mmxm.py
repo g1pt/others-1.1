@@ -1,19 +1,7 @@
 """MMXM phase detection."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from src.data import Candle
-
-
-@dataclass(frozen=True)
-class MmxmPhase:
-    index: int
-    timestamp: str
-    phase: str
-    range_high: float
-    range_low: float
-    sweep: str | None = None
+from src.models import Candle, MmxmPhase
 
 
 def detect_mmxm_phases(candles: list[Candle], lookback: int = 20) -> list[MmxmPhase]:

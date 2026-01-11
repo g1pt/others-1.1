@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.data import Candle
+from src.models import Candle
 
 
 @dataclass(frozen=True)

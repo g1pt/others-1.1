@@ -1,22 +1,12 @@
 """Data loading utilities for research runs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
-
-@dataclass(frozen=True)
-class Candle:
-    timestamp: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float | None = None
-
+from src.models import Candle
 
 def load_candles_csv(path: str | Path) -> list[Candle]:
     """Load candles from a CSV file."""

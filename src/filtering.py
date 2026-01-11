@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Iterable
 
-from src.data import Candle
+from src.models import Candle
 from src.entries import EntrySignal
 
 

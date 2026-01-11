@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from src.data import Candle
+from src.models import Candle
 from src.entries import EntrySignal, generate_entries
 from src.filtering import ComboFilter, filter_entry_signals, infer_timeframe_minutes
 from src.mmxm import MmxmPhase, detect_mmxm_phases

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from src.models import Trade
-from src.data import Candle
+from src.models import Candle
 from src.entries import EntrySignal
 
 
