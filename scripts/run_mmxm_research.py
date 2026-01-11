@@ -23,6 +23,7 @@ from src.models import Candle
 from src.day_context import label_days, label_for_timestamp  # noqa: E402
 from src.filtering import load_combo_filter  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
+from src.reporting import leakage_report  # noqa: E402
 from src.research.reporting import ob_failure_counts, top_candidates  # noqa: E402
 
 DEFAULT_DATASETS = {
@@ -202,6 +203,8 @@ def _run_instrument(path: Path, runs_dir: Path, combo_filter) -> None:
 
     write_trades_csv(result, runs_dir / f"trades_{label}.csv")
     _write_summaries(result.trades, runs_dir, label)
+    print()
+    print(leakage_report(result.trades))
 
 
 def _parse_args() -> argparse.Namespace:
