@@ -50,6 +50,7 @@ class SimulationResult:
     stopped_by: str
     skipped_by_daily_loss: int
     skipped_by_max_trades: int
+    missing_pnl_trades: int
 
 
 def _data_roots() -> list[Path]:
@@ -252,6 +253,19 @@ def _trade_points_units(trade) -> float | None:
     return None
 
 
+def _ensure_datetime(value: datetime | date | str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported entry_time format: {value}") from exc
+    raise TypeError(f"Unsupported entry_time type: {type(value)!r}")
+
+
 def filter_trades(
     trades,
     allow_entry_types: list[str],
@@ -298,9 +312,11 @@ def simulate_equity(
     skipped_by_daily_loss = 0
     skipped_by_max_trades = 0
     stopped_by = "none"
+    missing_pnl_trades = 0
 
-    for trade in sorted(trades, key=lambda t: t.entry_time):
-        trade_date = trade.entry_time.date()
+    for trade in sorted(trades, key=lambda t: _ensure_datetime(t.entry_time)):
+        entry_time = _ensure_datetime(trade.entry_time)
+        trade_date = entry_time.date()
         if stopped_by == "max_dd":
             break
         if daily_loss_pct and trade_date in daily_loss_blocked:
@@ -315,6 +331,7 @@ def simulate_equity(
 
         trade_return, mode = _trade_return_units(trade)
         if trade_return is None or mode != "R":
+            missing_pnl_trades += 1
             continue
 
         risk_cash = equity * risk_pct
@@ -338,6 +355,9 @@ def simulate_equity(
             if equity <= day_start * (1 - daily_loss_pct):
                 daily_loss_blocked.add(trade_date)
 
+    if missing_pnl_trades:
+        raise ValueError("missing_pnl_trades must remain 0 for step 4C")
+
     total_return_pct = (
         (equity - initial_equity) / initial_equity * 100 if initial_equity else 0.0
     )
@@ -352,6 +372,7 @@ def simulate_equity(
         stopped_by=stopped_by,
         skipped_by_daily_loss=skipped_by_daily_loss,
         skipped_by_max_trades=skipped_by_max_trades,
+        missing_pnl_trades=missing_pnl_trades,
     )
 
 
@@ -454,6 +475,31 @@ def _print_leakage_contribution(trade_results: list[dict], missing_pnl: int = 0)
     print(f"missing_pnl_trades={missing_pnl}")
 
 
+def _print_step4c_leakage_contribution(trade_results: list[dict]) -> None:
+    print("\n--- Leakage Contribution ---")
+    print("-- By EntryType")
+    for row in _bucket_contribution(trade_results, _normalize_entry_type):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- By Phase")
+    for row in _bucket_contribution(trade_results, _normalize_phase):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+    print("-- By OB Tradability")
+    for row in _bucket_contribution(trade_results, _normalize_tradability):
+        print(
+            f"{row['key']}: trades={row['trades']} pnl_R={row['total_pnl_units']:.2f} "
+            f"pnl_cash={row['pnl_cash']:.2f} "
+            f"contrib={row['contribution_pct']:.2f}%"
+        )
+
+
 def _simulate_equity_and_contribution(trades) -> None:
     # Step 4B: Equity + Contribution
     equity = INITIAL_EQUITY
@@ -517,25 +563,6 @@ def _validate_risk_pct(risk_pct: float) -> None:
         raise ValueError("risk must be between 0.01 and 0.03")
 
 
-def _print_variant_report(
-    label: str,
-    baseline_trades: int,
-    filtered_trades: list,
-    sim_result: SimulationResult,
-) -> None:
-    print(f"\n--- {label} ---")
-    print(f"trades_in_baseline={baseline_trades}")
-    print(f"trades_after_filter={len(filtered_trades)}")
-    print(f"trades_taken_after_guards={len(sim_result.taken_trades)}")
-    print(f"end_equity={sim_result.equity_end:.2f}")
-    print(f"total_return_pct={sim_result.total_return_pct:.2f}")
-    print(f"max_drawdown_pct={sim_result.max_drawdown_pct:.2f}")
-    print(f"stopped_by={sim_result.stopped_by}")
-    print(f"skipped_by_daily_loss={sim_result.skipped_by_daily_loss}")
-    print(f"skipped_by_max_trades={sim_result.skipped_by_max_trades}")
-    _print_leakage_contribution(sim_result.trade_results)
-
-
 def _run_step4c_matrix(
     trades,
     initial_equity: float,
@@ -546,40 +573,32 @@ def _run_step4c_matrix(
 ) -> None:
     variants = [
         (
-            "Variant A: Refinement only + Tradable only + all phases",
-            ["Refinement Entry"],
-            True,
-            None,
+            "[4C-A] BASELINE",
+            "Baseline",
+            lambda trade: True,
         ),
         (
-            "Variant B: Refinement only + Tradable only + Manipulation only",
-            ["Refinement Entry"],
-            True,
-            ["Manipulation"],
+            "[4C-B] Refinement only",
+            "Refinement Entry",
+            lambda trade: _normalize_entry_type(trade) == "Refinement Entry",
         ),
         (
-            "Variant C: Refinement + Risk + Tradable only + all phases",
-            ["Refinement Entry", "Risk Entry"],
-            True,
-            None,
+            "[4C-C] Refinement + Tradable OB",
+            "Refinement Entry + Tradable",
+            lambda trade: _normalize_entry_type(trade) == "Refinement Entry"
+            and _normalize_tradability(trade) == "Tradable",
         ),
         (
-            "Variant D: Refinement + Risk + Tradable only + Manipulation only",
-            ["Refinement Entry", "Risk Entry"],
-            True,
-            ["Manipulation"],
-        ),
-        (
-            "Variant E (diagnostic): Refinement + Risk + Confirmation + Tradable only + Manipulation only",
-            ["Refinement Entry", "Risk Entry", "Confirmation Entry"],
-            True,
-            ["Manipulation"],
+            "[4C-D] Refinement + Tradable + Manipulation",
+            "Refinement Entry + Tradable + Manipulation",
+            lambda trade: _normalize_entry_type(trade) == "Refinement Entry"
+            and _normalize_tradability(trade) == "Tradable"
+            and _normalize_phase(trade) == "Manipulation",
         ),
     ]
 
-    baseline_trades = len(trades)
-    for label, allow_entries, require_tradable, allow_phases in variants:
-        filtered = filter_trades(trades, allow_entries, require_tradable, allow_phases)
+    for label, _, predicate in variants:
+        filtered = [trade for trade in trades if predicate(trade)]
         sim_result = simulate_equity(
             filtered,
             initial_equity,
@@ -588,7 +607,14 @@ def _run_step4c_matrix(
             daily_loss_pct,
             max_trades_per_day,
         )
-        _print_variant_report(label, baseline_trades, filtered, sim_result)
+        print("\n==============================")
+        print(label)
+        print("==============================")
+        print(f"trades={len(sim_result.taken_trades)}")
+        print(f"end_equity={sim_result.equity_end:.2f}")
+        print(f"total_return_pct={sim_result.total_return_pct:.2f}")
+        print(f"max_drawdown_pct={sim_result.max_drawdown_pct:.2f}")
+        _print_step4c_leakage_contribution(sim_result.trade_results)
 
 
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:
