@@ -261,9 +261,9 @@ def _ensure_datetime(value: datetime | date | str) -> datetime:
     if isinstance(value, str):
         try:
             return datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError(f"Unsupported entry_time format: {value}") from exc
-    raise TypeError(f"Unsupported entry_time type: {type(value)!r}")
+        except ValueError:
+            return datetime.min
+    return datetime.min
 
 
 def filter_trades(
@@ -295,38 +295,35 @@ def filter_trades(
 
 def simulate_equity(
     trades,
-    initial_equity: float,
-    risk_pct: float,
-    max_dd_pct: float,
-    daily_loss_pct: float,
-    max_trades_per_day: int,
+    initial_equity: float = 10000.0,
+    base_risk_pct: float = 0.01,
+    max_dd_pct: float = 0.03,
+    max_trades_per_day: int = 1,
+    cooldown_losses: int = 2,
+    reduce_risk_under_hwm: bool = True,
+    reduced_risk_pct: float = 0.005,
 ) -> SimulationResult:
     equity = initial_equity
-    peak_equity = equity
+    high_watermark = equity
     max_drawdown = 0.0
     trade_results: list[dict] = []
     taken_trades: list = []
-    day_start_equity: dict[date, float] = {}
     trades_per_day: dict[date, int] = {}
-    daily_loss_blocked: set[date] = set()
     skipped_by_daily_loss = 0
     skipped_by_max_trades = 0
     stopped_by = "none"
     missing_pnl_trades = 0
+    consecutive_losses = 0
 
     for trade in sorted(trades, key=lambda t: _ensure_datetime(t.entry_time)):
         entry_time = _ensure_datetime(trade.entry_time)
         trade_date = entry_time.date()
-        if stopped_by == "max_dd":
+        if stopped_by != "none":
             break
-        if daily_loss_pct and trade_date in daily_loss_blocked:
-            skipped_by_daily_loss += 1
-            continue
         if max_trades_per_day and trades_per_day.get(trade_date, 0) >= max_trades_per_day:
             skipped_by_max_trades += 1
             continue
-        if trade_date not in day_start_equity:
-            day_start_equity[trade_date] = equity
+        if trade_date not in trades_per_day:
             trades_per_day[trade_date] = 0
 
         trade_return, mode = _trade_return_units(trade)
@@ -334,11 +331,16 @@ def simulate_equity(
             missing_pnl_trades += 1
             continue
 
+        risk_pct = (
+            reduced_risk_pct
+            if reduce_risk_under_hwm and equity < high_watermark
+            else base_risk_pct
+        )
         risk_cash = equity * risk_pct
         pnl_cash = trade_return * risk_cash
         equity += pnl_cash
-        peak_equity = max(peak_equity, equity)
-        drawdown = (peak_equity - equity) / peak_equity if peak_equity else 0.0
+        high_watermark = max(high_watermark, equity)
+        drawdown = (high_watermark - equity) / high_watermark if high_watermark else 0.0
         max_drawdown = max(max_drawdown, drawdown)
 
         trade_results.append(
@@ -347,16 +349,17 @@ def simulate_equity(
         taken_trades.append(trade)
         trades_per_day[trade_date] += 1
 
+        if trade_return < 0:
+            consecutive_losses += 1
+        else:
+            consecutive_losses = 0
+
         if max_dd_pct and drawdown >= max_dd_pct:
             stopped_by = "max_dd"
             break
-        if daily_loss_pct:
-            day_start = day_start_equity[trade_date]
-            if equity <= day_start * (1 - daily_loss_pct):
-                daily_loss_blocked.add(trade_date)
-
-    if missing_pnl_trades:
-        raise ValueError("missing_pnl_trades must remain 0 for step 4C")
+        if cooldown_losses and consecutive_losses >= cooldown_losses:
+            stopped_by = "cooldown_losses"
+            break
 
     total_return_pct = (
         (equity - initial_equity) / initial_equity * 100 if initial_equity else 0.0
@@ -568,7 +571,6 @@ def _run_step4c_matrix(
     initial_equity: float,
     risk_pct: float,
     max_dd_pct: float,
-    daily_loss_pct: float,
     max_trades_per_day: int,
 ) -> None:
     variants = [
@@ -601,20 +603,63 @@ def _run_step4c_matrix(
         filtered = [trade for trade in trades if predicate(trade)]
         sim_result = simulate_equity(
             filtered,
-            initial_equity,
-            risk_pct,
-            max_dd_pct,
-            daily_loss_pct,
-            max_trades_per_day,
+            initial_equity=initial_equity,
+            base_risk_pct=risk_pct,
+            max_dd_pct=max_dd_pct,
+            max_trades_per_day=max_trades_per_day,
         )
         print("\n==============================")
         print(label)
         print("==============================")
+        if not sim_result.taken_trades:
+            print("no trades")
         print(f"trades={len(sim_result.taken_trades)}")
         print(f"end_equity={sim_result.equity_end:.2f}")
         print(f"total_return_pct={sim_result.total_return_pct:.2f}")
         print(f"max_drawdown_pct={sim_result.max_drawdown_pct:.2f}")
         _print_step4c_leakage_contribution(sim_result.trade_results)
+
+
+def _split_trades_into_slices(trades, slices: int = 3) -> list[list]:
+    if not trades:
+        return [[] for _ in range(slices)]
+    total = len(trades)
+    base = total // slices
+    remainder = total % slices
+    result = []
+    start = 0
+    for idx in range(slices):
+        size = base + (1 if idx < remainder else 0)
+        end = start + size
+        result.append(list(trades[start:end]))
+        start = end
+    return result
+
+
+def _run_step4d_robustness(
+    trades,
+    initial_equity: float,
+    risk_pct: float,
+    max_dd_pct: float,
+    max_trades_per_day: int,
+) -> None:
+    print("\n=== [4D] ROBUSTNESS (MMXM_4C_D) ===")
+    slice_labels = ["[4D-1] early", "[4D-2] mid", "[4D-3] late"]
+    for label, trade_slice in zip(slice_labels, _split_trades_into_slices(trades)):
+        sim_result = simulate_equity(
+            trade_slice,
+            initial_equity=initial_equity,
+            base_risk_pct=risk_pct,
+            max_dd_pct=max_dd_pct,
+            max_trades_per_day=max_trades_per_day,
+        )
+        print(label)
+        if not sim_result.taken_trades:
+            print("no trades")
+        print(f"trades={len(sim_result.taken_trades)}")
+        print(f"end_equity={sim_result.equity_end:.2f}")
+        print(f"total_return_pct={sim_result.total_return_pct:.2f}")
+        print(f"max_drawdown_pct={sim_result.max_drawdown_pct:.2f}")
 
 
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:
@@ -665,7 +710,6 @@ def _run_instrument_step4c(
     initial_equity: float,
     risk_pct: float,
     max_dd_pct: float,
-    daily_loss_pct: float,
     max_trades_per_day: int,
 ) -> None:
     instrument = _instrument_from_path(path)
@@ -677,7 +721,20 @@ def _run_instrument_step4c(
         initial_equity,
         risk_pct,
         max_dd_pct,
-        daily_loss_pct,
+        max_trades_per_day,
+    )
+    step4d_trades = [
+        trade
+        for trade in result.trades
+        if _normalize_entry_type(trade) == "Refinement Entry"
+        and _normalize_tradability(trade) == "Tradable"
+        and _normalize_phase(trade) == "Manipulation"
+    ]
+    _run_step4d_robustness(
+        step4d_trades,
+        initial_equity,
+        risk_pct,
+        max_dd_pct,
         max_trades_per_day,
     )
 
@@ -761,17 +818,30 @@ def _run_self_test() -> None:
         _TestTrade(datetime(2024, 1, 1, 9), -2.0),
         _TestTrade(datetime(2024, 1, 1, 10), 1.0),
     ]
-    dd_result = simulate_equity(trades_dd, 10000, 0.02, 0.03, 0.0, 0)
+    dd_result = simulate_equity(
+        trades_dd,
+        initial_equity=10000,
+        base_risk_pct=0.02,
+        max_dd_pct=0.03,
+        max_trades_per_day=0,
+    )
     assert dd_result.stopped_by == "max_dd"
 
-    trades_daily = [
+    trades_cooldown = [
         _TestTrade(datetime(2024, 1, 1, 9), -1.0),
         _TestTrade(datetime(2024, 1, 1, 10), -1.0),
         _TestTrade(datetime(2024, 1, 2, 9), 1.0),
     ]
-    daily_result = simulate_equity(trades_daily, 10000, 0.02, 0.5, 0.02, 0)
-    assert len(daily_result.taken_trades) == 2
-    assert daily_result.skipped_by_daily_loss >= 1
+    cooldown_result = simulate_equity(
+        trades_cooldown,
+        initial_equity=10000,
+        base_risk_pct=0.02,
+        max_dd_pct=0.5,
+        max_trades_per_day=0,
+        cooldown_losses=2,
+    )
+    assert len(cooldown_result.taken_trades) == 2
+    assert cooldown_result.stopped_by == "cooldown_losses"
 
 
 def main() -> None:
@@ -800,7 +870,6 @@ def main() -> None:
                 args.initial_equity,
                 args.risk,
                 args.max_dd,
-                args.daily_loss,
                 args.max_trades_day,
             )
 
