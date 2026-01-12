@@ -9,7 +9,7 @@ from src.backtest import run_backtest
 from src.config import INITIAL_EQUITY, RISK_PER_TRADE
 from src.data import generate_synthetic_candles, load_candles_csv
 from src.filtering import load_combo_filter
-from src.report import write_summary_csv, write_trades_csv
+from src.report import write_equity_log_csv, write_summary_csv, write_trades_csv
 from src.reporting import leakage_contribution_report, leakage_report
 from src.risk import simulate_equity
 
@@ -92,7 +92,12 @@ def main() -> None:
         result.trades,
         initial_equity=args.initial_equity,
         risk_per_trade=args.risk_per_trade,
+        risk_policy="throttle",
+        drawdown_trigger=0.05,
+        risk_floor=0.005,
+        risk_ceiling=0.01,
     )
+    write_equity_log_csv(equity, runs_dir / "equity_log.csv")
     print("\nEquity Curve Summary")
     print(f"initial_equity={equity.initial_equity:.2f}")
     print(f"final_equity={equity.final_equity:.2f}")
