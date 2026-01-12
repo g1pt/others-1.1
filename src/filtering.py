@@ -51,6 +51,21 @@ class ComboFilter:
         return self.rejection_reasons.get(timeframe, {}).get(combo)
 
 
+@dataclass(frozen=True)
+class EntryFilter:
+    allowed_methods: set[str] | None = None
+    allowed_phases: set[str] | None = None
+    require_tradable: bool | None = None
+
+    @staticmethod
+    def refinement_only() -> "EntryFilter":
+        return EntryFilter(
+            allowed_methods={"Refinement Entry"},
+            allowed_phases={"Manipulation"},
+            require_tradable=True,
+        )
+
+
 def normalize_timeframe(value: Any) -> str | None:
     if isinstance(value, str):
         trimmed = value.strip()
@@ -232,4 +247,19 @@ def filter_entry_signals(
             "filtered_out: "
             f"{reason} | timeframe={timeframe} | combo={combo[0]}|{combo[1]}|{combo[2]}",
         )
+    return filtered
+
+
+def filter_entries(entries: list[EntrySignal], entry_filter: EntryFilter) -> list[EntrySignal]:
+    filtered: list[EntrySignal] = []
+    for entry in entries:
+        if entry_filter.allowed_methods is not None and entry.method not in entry_filter.allowed_methods:
+            continue
+        if entry_filter.allowed_phases is not None and entry.mmxm_phase not in entry_filter.allowed_phases:
+            continue
+        if entry_filter.require_tradable is True and not entry.ob_tradable:
+            continue
+        if entry_filter.require_tradable is False and entry.ob_tradable:
+            continue
+        filtered.append(entry)
     return filtered

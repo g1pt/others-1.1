@@ -27,6 +27,17 @@ class TradeResult:
 
 
 @dataclass(frozen=True)
+class TradeLog:
+    trade: Trade
+    equity_before: float
+    equity_after: float
+    risk_pct: float
+    risk_amount: float
+    drawdown_pct: float
+    new_equity_high: bool
+
+
+@dataclass(frozen=True)
 class SkippedTrade:
     trade: Trade
     reason: str
@@ -42,6 +53,7 @@ class EquitySimulation:
     equity_per_trade: list[float]
     daily_equity: list[DailyEquity]
     trade_results: list[TradeResult]
+    trade_logs: list[TradeLog]
     skipped_trades: list[SkippedTrade]
 
 
@@ -61,11 +73,16 @@ def simulate_equity(
     *,
     initial_equity: float = 10_000.0,
     risk_per_trade: float = 0.01,
+    risk_policy: str = "fixed",
+    drawdown_trigger: float = 0.05,
+    risk_floor: float = 0.005,
+    risk_ceiling: float = 0.01,
 ) -> EquitySimulation:
     """Simulate an equity curve based on trade outcomes in currency."""
     equity = initial_equity
     equity_curve: list[float] = []
     trade_results: list[TradeResult] = []
+    trade_logs: list[TradeLog] = []
     skipped_trades: list[SkippedTrade] = []
     daily_equity: list[DailyEquity] = []
     current_date: str | None = None
@@ -83,8 +100,18 @@ def simulate_equity(
             skipped_trades.append(SkippedTrade(trade=trade, reason="missing_exit"))
             continue
 
+        equity_before = equity
         direction = 1 if trade.direction == "bullish" else -1
-        risk_amount = equity * risk_per_trade
+        risk_pct = _resolve_risk_pct(
+            equity,
+            peak_equity,
+            risk_per_trade,
+            risk_policy=risk_policy,
+            drawdown_trigger=drawdown_trigger,
+            risk_floor=risk_floor,
+            risk_ceiling=risk_ceiling,
+        )
+        risk_amount = equity * risk_pct
         size = risk_amount / stop_distance
         pnl = size * (trade.exit_price - trade.entry_price) * direction
         equity += pnl
@@ -98,6 +125,24 @@ def simulate_equity(
                 equity_after=equity,
             )
         )
+        new_high = equity > peak_equity
+        if new_high:
+            peak_equity = equity
+
+        drawdown = peak_equity - equity
+        max_drawdown = max(max_drawdown, drawdown)
+        drawdown_pct = (drawdown / peak_equity) if peak_equity else 0.0
+        trade_logs.append(
+            TradeLog(
+                trade=trade,
+                equity_before=equity_before,
+                equity_after=equity,
+                risk_pct=risk_pct,
+                risk_amount=risk_amount,
+                drawdown_pct=drawdown_pct,
+                new_equity_high=new_high,
+            )
+        )
 
         trade_date = _extract_date(trade.entry_time)
         if current_date is None:
@@ -109,8 +154,8 @@ def simulate_equity(
             current_date = trade_date
         latest_equity_for_date = equity
 
-        peak_equity = max(peak_equity, equity)
-        max_drawdown = max(max_drawdown, peak_equity - equity)
+        if not new_high:
+            peak_equity = max(peak_equity, equity)
 
     if current_date is not None and latest_equity_for_date is not None:
         daily_equity.append(DailyEquity(date=current_date, equity=latest_equity_for_date))
@@ -133,6 +178,7 @@ def simulate_equity(
         equity_per_trade=equity_curve,
         daily_equity=daily_equity,
         trade_results=trade_results,
+        trade_logs=trade_logs,
         skipped_trades=skipped_trades,
     )
 
@@ -245,9 +291,32 @@ def simulate_equity_with_guards(
         equity_per_trade=equity_curve,
         daily_equity=daily_equity,
         trade_results=trade_results,
+        trade_logs=[],
         skipped_trades=skipped_trades,
     )
     return GuardedEquitySimulation(simulation=simulation, stopped_by=stopped_by)
+
+
+def _resolve_risk_pct(
+    equity: float,
+    peak_equity: float,
+    risk_per_trade: float,
+    *,
+    risk_policy: str,
+    drawdown_trigger: float,
+    risk_floor: float,
+    risk_ceiling: float,
+) -> float:
+    if risk_policy == "fixed":
+        return risk_per_trade
+    if risk_policy == "throttle":
+        drawdown_pct = (peak_equity - equity) / peak_equity if peak_equity else 0.0
+        if drawdown_pct >= drawdown_trigger:
+            return risk_floor
+        if equity >= peak_equity:
+            return risk_ceiling
+        return risk_ceiling
+    raise ValueError(f"Unknown risk_policy: {risk_policy}")
 
 
 def _stop_distance(trade: Trade) -> float:
