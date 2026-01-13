@@ -42,7 +42,7 @@ Run (cmd):
 Test (PowerShell):
   $body = @{
     secret="CHANGE_ME"
-    symbol="FX_SPX500"
+    symbol="SP500"
     timeframe="30"
     timestamp="2026-01-11T20:00:00Z"
     setup="MMXM_4C_D"
