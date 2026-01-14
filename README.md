@@ -37,6 +37,7 @@ Install (venv):
 
 Run (cmd):
   set WEBHOOK_SECRET=CHANGE_ME
+  set EXECUTION_MODE=LOG_ONLY
   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Test (PowerShell):
@@ -53,3 +54,6 @@ Test (PowerShell):
     price=5000.0
   } | ConvertTo-Json
   Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/webhook/tradingview" -ContentType "application/json" -Body $body
+
+Switch to paper simulation:
+  set EXECUTION_MODE=PAPER_SIM
