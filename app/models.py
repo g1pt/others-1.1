@@ -1,4 +1,5 @@
-from typing import Any, Optional, Union
+from datetime import datetime
+from typing import Optional, Union
 
 from pydantic import BaseModel
 
@@ -7,7 +8,7 @@ class TVWebhook(BaseModel):
     secret: str
     symbol: str
     timeframe: Union[int, str]
-    timestamp: str
+    timestamp: Optional[str] = None
     setup: str
     entry_type: str
     phase: str
@@ -23,29 +24,28 @@ class TVWebhook(BaseModel):
     sweep: Optional[str] = None
     bos: Optional[str] = None
     fvg_size: Optional[float] = None
-    sim_outcome_r: Optional[float] = None
 
 
-class Order(BaseModel):
+class PaperOrder(BaseModel):
     id: str
     symbol: str
     timeframe: str
-    setup: str
-    side: str
+    setup_id: str
+    direction: str
     entry_price: float
-    stop_price: float
-    tp_price: float
+    stop_loss: float
+    take_profit: float
     risk_pct: float
-    qty: float
+    risk_cash: float
+    position_size: float
     status: str
-    opened_at: str
-    closed_at: Optional[str] = None
-    pnl_r: Optional[float] = None
+    opened_utc: str
+    closed_utc: Optional[str] = None
     pnl_cash: Optional[float] = None
-    meta: dict[str, Any]
+    pnl_r: Optional[float] = None
 
 
-class LedgerState(BaseModel):
+class EquityState(BaseModel):
     equity: float
     high_watermark: float
     max_dd_pct: float
@@ -54,3 +54,11 @@ class LedgerState(BaseModel):
     daily_dd_pct: float
     trades_today: int
     consec_losses: int
+
+
+class Candle(BaseModel):
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float

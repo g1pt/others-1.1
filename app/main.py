@@ -1,8 +1,27 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
-from app.config import EXECUTION_MODE, SYMBOL_MAP, SYMBOL_RULESETS, WEBHOOK_SECRET
-from app.execution import ledger, paper, research, risk
+from app.candles import load_candles
+from app.config import EXECUTION_MODE, WEBHOOK_SECRET
 from app.models import TVWebhook
+from app.paper_engine import (
+    build_order,
+    can_open_trade,
+    compute_risk_pct,
+    normalize_direction,
+    normalize_timeframe,
+    parse_timestamp,
+    resolve_symbol,
+    simulate_backfill,
+    validate_signal,
+)
+from app.storage import (
+    ensure_logs_dir,
+    load_orders_sorted,
+    load_state,
+    log_order,
+    log_paper_trade,
+    save_state,
+)
 from app.utils.time import utc_now
 
 app = FastAPI()
@@ -10,148 +29,143 @@ app = FastAPI()
 
 @app.on_event("startup")
 def _startup() -> None:
-    ledger.ensure_logs_dir()
+    ensure_logs_dir()
 
 
-def normalize_timeframe(timeframe: int | str) -> str:
-    if isinstance(timeframe, int):
-        return str(timeframe)
-    if isinstance(timeframe, str) and timeframe.isdigit():
-        return timeframe
-    raise ValueError("Invalid timeframe")
-
-
-def normalize_side(direction: str) -> str:
-    normalized = {
-        "buy": "buy",
-        "long": "buy",
-        "sell": "sell",
-        "short": "sell",
-    }.get(direction.lower())
-    if normalized is None:
-        raise ValueError("Invalid direction")
-    return normalized
+def _response(accepted: bool, reason: str, **extra: object) -> dict[str, object]:
+    payload: dict[str, object] = {"ok": True, "accepted": accepted, "reason": reason}
+    payload.update(extra)
+    return payload
 
 
 @app.post("/webhook/tradingview")
-def tradingview_webhook(payload: TVWebhook):
+def tradingview_webhook(payload: TVWebhook) -> dict[str, object]:
+    now = utc_now()
+    event = payload.model_dump()
+    event["received_utc"] = now.isoformat()
+    parsed_timestamp = parse_timestamp(payload.timestamp)
+    event["timestamp_parsed"] = parsed_timestamp.isoformat() if parsed_timestamp else None
+
     if payload.secret != WEBHOOK_SECRET:
-        raise HTTPException(status_code=400, detail="Invalid secret")
-    internal_symbol = SYMBOL_MAP.get(payload.symbol)
+        event["blocked_reason"] = "blocked_bad_secret"
+        log_paper_trade(event)
+        return _response(False, "blocked_bad_secret")
+
+    internal_symbol = resolve_symbol(payload.symbol)
     if internal_symbol is None:
-        raise HTTPException(status_code=400, detail="Symbol not allowed")
-    ruleset = SYMBOL_RULESETS.get(internal_symbol)
-    if not ruleset or not ruleset.get("enabled"):
-        raise HTTPException(status_code=400, detail="Symbol not enabled")
+        event["blocked_reason"] = "blocked_symbol_not_allowed"
+        log_paper_trade(event)
+        return _response(False, "blocked_symbol_not_allowed")
+
     try:
         timeframe_value = normalize_timeframe(payload.timeframe)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if timeframe_value not in ruleset["allowed_timeframes"]:
-        raise HTTPException(status_code=400, detail="Timeframe not allowed")
-    if payload.setup != ruleset["require_setup"]:
-        raise HTTPException(status_code=400, detail="Setup not allowed")
-    if payload.entry_type != ruleset["entry_type"]:
-        raise HTTPException(status_code=400, detail="Entry type not allowed")
-    if payload.phase != ruleset["phase"]:
-        raise HTTPException(status_code=400, detail="Phase not allowed")
-    if payload.ob_tradability != ruleset["ob_tradability"]:
-        raise HTTPException(status_code=400, detail="OB tradability not allowed")
+    except ValueError:
+        event["blocked_reason"] = "blocked_bad_timeframe"
+        log_paper_trade(event)
+        return _response(False, "blocked_bad_timeframe")
+
     side_value = payload.direction or payload.side
     if not side_value:
-        raise HTTPException(status_code=400, detail="Direction not provided")
+        event["blocked_reason"] = "blocked_missing_direction"
+        log_paper_trade(event)
+        return _response(False, "blocked_missing_direction")
     try:
-        normalized_side = normalize_side(side_value)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized_side = normalize_direction(side_value)
+    except ValueError:
+        event["blocked_reason"] = "blocked_bad_direction"
+        log_paper_trade(event)
+        return _response(False, "blocked_bad_direction")
 
-    event = payload.model_dump()
-    event["symbol_raw"] = payload.symbol
     event["symbol"] = internal_symbol
     event["timeframe"] = timeframe_value
     event["direction"] = normalized_side
-    event["received_utc"] = utc_now().isoformat()
 
-    ledger.log_paper_trade(event)
+    gate_ok, gate_reason = validate_signal(payload, internal_symbol, timeframe_value)
+    if not gate_ok:
+        event["blocked_reason"] = "blocked_gate_mismatch"
+        event["blocked_detail"] = gate_reason
+        log_paper_trade(event)
+        return _response(False, "blocked_gate_mismatch", detail=gate_reason)
 
-    state = ledger.load_state()
-    state_before = state.model_dump()
-    now = utc_now()
-    can_trade, reason = risk.can_open_trade(state, now, internal_symbol)
-
-    if not can_trade:
-        research.log_research_event(
-            {
-                "type": "accepted_trigger_no_trade",
-                "reason": reason,
-                "payload": event,
-                "state_before": state_before,
-                "state_after": state.model_dump(),
-            }
-        )
-        ledger.save_state(state)
-        return {"ok": True, "accepted": True, "trade": False, "reason": reason}
-
-    if EXECUTION_MODE == "LOG_ONLY":
-        research.log_research_event(
-            {
-                "type": "accepted_trigger_no_trade",
-                "reason": "log_only",
-                "payload": event,
-                "state_before": state_before,
-                "state_after": state.model_dump(),
-            }
-        )
-        ledger.save_state(state)
-        return {"ok": True, "accepted": True, "trade": False, "reason": "log_only"}
+    log_paper_trade(event)
 
     if EXECUTION_MODE == "LIVE_BROKER":
-        raise HTTPException(status_code=400, detail="Live broker mode disabled")
-
+        return _response(False, "blocked_live_broker_disabled")
+    if EXECUTION_MODE == "LOG_ONLY":
+        return _response(True, "log_only", trade=False)
     if EXECUTION_MODE != "PAPER_SIM":
-        raise HTTPException(status_code=400, detail="Unknown execution mode")
+        return _response(False, "blocked_unknown_execution_mode")
 
-    risk_pct = risk.compute_risk_pct(state)
-    order = paper.build_order_from_signal(
+    state = load_state()
+    can_trade, reason = can_open_trade(state, now)
+    if not can_trade:
+        return _response(False, reason)
+
+    risk_pct = compute_risk_pct(state)
+    order = build_order(
         payload=payload,
-        state_equity=state.equity,
+        equity=state.equity,
         risk_pct=risk_pct,
         symbol=internal_symbol,
         timeframe=timeframe_value,
-        side=normalized_side,
+        direction=normalized_side,
         now=now,
     )
     state.trades_today += 1
+    log_order(order)
+    save_state(state)
 
-    pnl_r, pnl_cash, closed_reason = paper.simulate_close(order, payload, now=now)
-    risk.update_after_close(state, pnl_cash, won=pnl_r > 0)
+    return _response(True, "accepted", trade=True, order_id=order.id)
 
-    ledger.log_order(order)
-    ledger.log_fill(order, closed_reason)
-    ledger.save_state(state)
 
-    research.log_research_event(
-        {
-            "type": "paper_simulated_trade",
-            "payload": event,
-            "state_before": state_before,
-            "state_after": state.model_dump(),
-            "risk_pct": risk_pct,
-            "order_id": order.id,
-            "pnl_r": pnl_r,
-            "pnl_cash": pnl_cash,
-            "equity_before": state_before["equity"],
-            "equity_after": state.equity,
-            "closed_reason": closed_reason,
-        }
-    )
-
+@app.get("/status")
+def status() -> dict[str, object]:
+    state = load_state()
+    orders = load_orders_sorted()
+    open_count = len([order for order in orders if order.status == "OPEN"])
+    recent_orders = [order.model_dump() for order in orders[-5:]]
     return {
-        "ok": True,
-        "accepted": True,
-        "trade": True,
-        "order_id": order.id,
-        "pnl_r": pnl_r,
-        "pnl_cash": pnl_cash,
-        "equity_after": state.equity,
+        "equity": state.equity,
+        "high_watermark": state.high_watermark,
+        "open_orders": open_count,
+        "last_orders": recent_orders,
     }
+
+
+@app.get("/orders")
+def orders(limit: int = 50) -> dict[str, object]:
+    orders_list = load_orders_sorted()
+    trimmed = orders_list[-limit:] if limit > 0 else orders_list
+    return {"orders": [order.model_dump() for order in trimmed]}
+
+
+@app.post("/simulate/backfill")
+def simulate_backfill_endpoint(symbol: str | None = None, timeframe: str | None = None) -> dict[str, object]:
+    state = load_state()
+    orders_list = load_orders_sorted()
+
+    if symbol:
+        orders_list = [order for order in orders_list if order.symbol == symbol]
+    if timeframe:
+        orders_list = [order for order in orders_list if order.timeframe == timeframe]
+
+    open_orders = [order for order in orders_list if order.status == "OPEN"]
+    if not open_orders:
+        return _response(True, "no_open_orders", closed=0)
+
+    closed_total = 0
+    grouped: dict[tuple[str, str], list] = {}
+    for order in open_orders:
+        grouped.setdefault((order.symbol, order.timeframe), []).append(order)
+
+    for (order_symbol, order_timeframe), group_orders in grouped.items():
+        candles = load_candles(order_symbol, order_timeframe)
+        if not candles:
+            return _response(False, "blocked_no_candles")
+        closed_orders = simulate_backfill(state, group_orders, candles)
+        for order in closed_orders:
+            log_order(order)
+        closed_total += len(closed_orders)
+
+    save_state(state)
+    return _response(True, "backfill_complete", closed=closed_total, equity=state.equity)
