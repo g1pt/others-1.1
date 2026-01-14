@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+import json
 from pathlib import Path
 import re
+import statistics
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -566,6 +568,282 @@ def _validate_risk_pct(risk_pct: float) -> None:
         raise ValueError("risk must be between 0.01 and 0.03")
 
 
+def compute_sl_tp(
+    entry_price: float, direction: str, sl_pct: float = 0.002, rr: float = 2.0
+) -> tuple[float, float]:
+    stop_distance = entry_price * sl_pct
+    if direction == "bullish":
+        sl_price = entry_price - stop_distance
+        tp_price = entry_price + (stop_distance * rr)
+    else:
+        sl_price = entry_price + stop_distance
+        tp_price = entry_price - (stop_distance * rr)
+    return sl_price, tp_price
+
+
+def _simulate_rr_trade(
+    trade,
+    candles: list[Candle],
+    candle_index: dict[str, int],
+    sl_pct: float,
+    rr: float,
+) -> Trade | None:
+    entry_idx = candle_index.get(trade.entry_time)
+    if entry_idx is None:
+        return None
+    sl_price, tp_price = compute_sl_tp(
+        trade.entry_price, trade.direction, sl_pct=sl_pct, rr=rr
+    )
+    exit_time = None
+    exit_price = None
+    pnl_r = None
+
+    start_idx = min(entry_idx + 1, len(candles))
+    for candle in candles[start_idx:]:
+        if trade.direction == "bullish":
+            hit_sl = candle.low <= sl_price
+            hit_tp = candle.high >= tp_price
+            if hit_sl and hit_tp:
+                exit_time = candle.timestamp
+                exit_price = sl_price
+                pnl_r = -1.0
+                break
+            if hit_sl:
+                exit_time = candle.timestamp
+                exit_price = sl_price
+                pnl_r = -1.0
+                break
+            if hit_tp:
+                exit_time = candle.timestamp
+                exit_price = tp_price
+                pnl_r = rr
+                break
+        else:
+            hit_sl = candle.high >= sl_price
+            hit_tp = candle.low <= tp_price
+            if hit_sl and hit_tp:
+                exit_time = candle.timestamp
+                exit_price = sl_price
+                pnl_r = -1.0
+                break
+            if hit_sl:
+                exit_time = candle.timestamp
+                exit_price = sl_price
+                pnl_r = -1.0
+                break
+            if hit_tp:
+                exit_time = candle.timestamp
+                exit_price = tp_price
+                pnl_r = rr
+                break
+
+    if exit_time is None:
+        if not candles:
+            return None
+        last_candle = candles[-1]
+        exit_time = last_candle.timestamp
+        exit_price = last_candle.close
+        stop_distance = abs(trade.entry_price - sl_price)
+        if stop_distance > 0:
+            if trade.direction == "bullish":
+                pnl_r = (exit_price - trade.entry_price) / stop_distance
+            else:
+                pnl_r = (trade.entry_price - exit_price) / stop_distance
+
+    return replace(
+        trade,
+        stop_price=sl_price,
+        exit_time=exit_time,
+        exit_price=exit_price,
+        pnl_r=pnl_r,
+    )
+
+
+def _compute_rr_metrics(
+    trades: list[Trade],
+    initial_equity: float,
+    risk_per_trade: float,
+) -> dict:
+    pnl_rs = [trade.pnl_r for trade in trades if trade.pnl_r is not None]
+    trades_count = len(pnl_rs)
+    wins = sum(1 for pnl in pnl_rs if pnl > 0)
+    losses = sum(1 for pnl in pnl_rs if pnl < 0)
+    winrate = (wins / trades_count * 100) if trades_count else 0.0
+    avg_r = sum(pnl_rs) / trades_count if trades_count else 0.0
+    median_r = statistics.median(pnl_rs) if trades_count else 0.0
+    expectancy_r = avg_r
+
+    gross_profit = sum(pnl for pnl in pnl_rs if pnl > 0)
+    gross_loss = abs(sum(pnl for pnl in pnl_rs if pnl < 0))
+    if gross_loss == 0:
+        profit_factor = float("inf") if gross_profit > 0 else 0.0
+    else:
+        profit_factor = gross_profit / gross_loss
+
+    equity = initial_equity
+    peak_equity = initial_equity
+    max_drawdown_pct = 0.0
+    for pnl_r in pnl_rs:
+        equity += equity * risk_per_trade * pnl_r
+        peak_equity = max(peak_equity, equity)
+        drawdown_pct = (
+            (peak_equity - equity) / peak_equity * 100 if peak_equity else 0.0
+        )
+        max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
+    total_return_pct = (
+        (equity - initial_equity) / initial_equity * 100
+        if initial_equity
+        else 0.0
+    )
+
+    longest_loss_streak = 0
+    current_streak = 0
+    for pnl_r in pnl_rs:
+        if pnl_r < 0:
+            current_streak += 1
+        else:
+            longest_loss_streak = max(longest_loss_streak, current_streak)
+            current_streak = 0
+    longest_loss_streak = max(longest_loss_streak, current_streak)
+
+    return {
+        "trades_count": trades_count,
+        "winrate": winrate,
+        "expectancy_R": expectancy_r,
+        "end_equity": equity,
+        "total_return_pct": total_return_pct,
+        "max_drawdown_pct": max_drawdown_pct,
+        "profit_factor": profit_factor,
+        "avg_R": avg_r,
+        "median_R": median_r,
+        "longest_loss_streak": longest_loss_streak,
+        "wins": wins,
+        "losses": losses,
+    }
+
+
+def _format_rr_table(rr_rows: list[dict]) -> None:
+    headers = [
+        "RR",
+        "Trades",
+        "Win%",
+        "ExpectR",
+        "EndEq",
+        "Ret%",
+        "MaxDD%",
+        "PF",
+        "AvgR",
+        "MedR",
+        "LossStk",
+    ]
+    print(" | ".join(headers))
+    print("-" * 110)
+    for row in rr_rows:
+        print(
+            " | ".join(
+                [
+                    f"{row['rr']:.1f}",
+                    f"{row['trades_count']}",
+                    f"{row['winrate']:.2f}",
+                    f"{row['expectancy_R']:.3f}",
+                    f"{row['end_equity']:.2f}",
+                    f"{row['total_return_pct']:.2f}",
+                    f"{row['max_drawdown_pct']:.2f}",
+                    f"{row['profit_factor']:.2f}"
+                    if row["profit_factor"] != float("inf")
+                    else "inf",
+                    f"{row['avg_R']:.3f}",
+                    f"{row['median_R']:.3f}",
+                    f"{row['longest_loss_streak']}",
+                ]
+            )
+        )
+
+
+def run_rr_sweep(
+    existing_trades: list[Trade],
+    rr_list: list[float],
+    config: dict,
+    tf_label: str,
+) -> None:
+    candles: list[Candle] = config["candles"]
+    candle_index = {candle.timestamp: idx for idx, candle in enumerate(candles)}
+    initial_equity = config["initial_equity"]
+    risk_per_trade = config["risk_per_trade"]
+    symbol = config["symbol"]
+    sl_pct = config.get("sl_pct", 0.002)
+
+    rr_results: list[dict] = []
+    rr_splits: dict[float, list[dict]] = {}
+
+    for rr in rr_list:
+        sweep_trades = []
+        for trade in existing_trades:
+            updated = _simulate_rr_trade(
+                trade,
+                candles,
+                candle_index,
+                sl_pct=sl_pct,
+                rr=rr,
+            )
+            if updated is None or updated.pnl_r is None:
+                continue
+            sweep_trades.append(updated)
+
+        metrics = _compute_rr_metrics(
+            sweep_trades,
+            initial_equity=initial_equity,
+            risk_per_trade=risk_per_trade,
+        )
+        metrics["rr"] = rr
+        rr_results.append(metrics)
+
+        split_metrics = []
+        for trade_slice in _split_trades_into_slices(sweep_trades):
+            split_metrics.append(
+                _compute_rr_metrics(
+                    trade_slice,
+                    initial_equity=initial_equity,
+                    risk_per_trade=risk_per_trade,
+                )
+            )
+        rr_splits[rr] = split_metrics
+
+    rr_results.sort(
+        key=lambda row: (row["max_drawdown_pct"], -row["total_return_pct"])
+    )
+
+    print(f"\n=== RR SWEEP ({symbol} {tf_label}) ===")
+    _format_rr_table(rr_results)
+
+    print("\n--- RR Sweep Robustness (early/mid/late) ---")
+    slice_labels = ["early", "mid", "late"]
+    for rr in rr_list:
+        print(f"RR {rr:.1f}")
+        for label, metrics in zip(slice_labels, rr_splits.get(rr, [])):
+            print(
+                f"{label}: trades={metrics['trades_count']} "
+                f"end_equity={metrics['end_equity']:.2f} "
+                f"total_return_pct={metrics['total_return_pct']:.2f} "
+                f"max_drawdown_pct={metrics['max_drawdown_pct']:.2f}"
+            )
+
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+    payload = {
+        "symbol": symbol,
+        "timeframe": tf_label,
+        "sl_pct": sl_pct,
+        "rr_list": rr_list,
+        "results": rr_results,
+        "robustness": {
+            f"{rr:.1f}": rr_splits.get(rr, []) for rr in rr_list
+        },
+    }
+    out_path = logs_dir / f"rr_sweep_{symbol.lower()}_{tf_label}.json"
+    out_path.write_text(json.dumps(payload, indent=2))
+
+
 def _run_step4c_matrix(
     trades,
     initial_equity: float,
@@ -662,6 +940,13 @@ def _run_step4d_robustness(
         print(f"max_drawdown_pct={sim_result.max_drawdown_pct:.2f}")
 
 
+def _timeframe_label_from_path(path: Path) -> str:
+    match = re.search(r",\s*(\d+)", path.stem)
+    if match:
+        return f"{match.group(1)}m"
+    return "unknown"
+
+
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -736,6 +1021,18 @@ def _run_instrument_step4c(
         risk_pct,
         max_dd_pct,
         max_trades_per_day,
+    )
+    run_rr_sweep(
+        step4d_trades,
+        [2.0, 3.0, 4.0, 5.0],
+        {
+            "candles": candles,
+            "initial_equity": initial_equity,
+            "risk_per_trade": risk_pct,
+            "symbol": instrument,
+            "sl_pct": 0.002,
+        },
+        _timeframe_label_from_path(path),
     )
 
 
