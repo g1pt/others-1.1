@@ -41,3 +41,15 @@ MAX_CONSEC_LOSSES = _get_int("MAX_CONSEC_LOSSES", 2)
 RR_DEFAULT = _get_float("RR_DEFAULT", 2.0)
 SL_DISTANCE_MODE = os.getenv("SL_DISTANCE_MODE", "fixed_pct")
 SL_FIXED_PCT = _get_float("SL_FIXED_PCT", 0.002)
+
+SYMBOL_MAP = {
+    "FX_SPX500": "SP500",
+    "SPX500": "SP500",
+    "SP500": "SP500",
+    "EURUSD": "EURUSD",
+}
+
+DEFAULT_EQUITY = _get_float("DEFAULT_EQUITY", 10000.0)
+DEFAULT_RISK_PER_TRADE = _get_float("DEFAULT_RISK_PER_TRADE", 0.005)
+DEFAULT_RR = _get_float("DEFAULT_RR", 2.0)
+DEFAULT_SL_PCT = _get_float("DEFAULT_SL_PCT", 0.002)

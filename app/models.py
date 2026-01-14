@@ -13,8 +13,7 @@ class TVWebhook(BaseModel):
     entry_type: str
     phase: str
     ob_tradability: str
-    direction: Optional[str] = None
-    side: Optional[str] = None
+    direction: str
     price: float
     htf_bias: Optional[str] = None
     session: Optional[str] = None
