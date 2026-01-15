@@ -17,11 +17,10 @@ class RiskConfig:
 
 @dataclass(frozen=True)
 class RiskLimits:
-    risk_per_trade_pct: float = 0.005
     max_trades_per_day: int = 1
-    stop_after_losses: int = 2
-    daily_dd_stop_pct: float = 0.02
-    hard_dd_cap_pct: float = 0.03
+    stop_after_consecutive_losses: int = 2
+    daily_drawdown_stop_pct: float = 0.02
+    hard_max_drawdown_pct: float = 0.03
 
 
 def compute_sl(entry: float, direction: str, st_pct: float = 0.002) -> float:
@@ -84,11 +83,11 @@ def can_open_trade(
     daily_dd = float(ledger_state.get("daily_drawdown_pct", 0.0))
     overall_dd = float(ledger_state.get("overall_drawdown_pct", 0.0))
 
-    if limits.hard_dd_cap_pct and overall_dd >= limits.hard_dd_cap_pct:
+    if limits.hard_max_drawdown_pct and overall_dd >= limits.hard_max_drawdown_pct:
         return False, "hard_drawdown_stop"
-    if limits.daily_dd_stop_pct and daily_dd >= limits.daily_dd_stop_pct:
+    if limits.daily_drawdown_stop_pct and daily_dd >= limits.daily_drawdown_stop_pct:
         return False, "daily_drawdown_stop"
-    if limits.stop_after_losses and consecutive_losses >= limits.stop_after_losses:
+    if limits.stop_after_consecutive_losses and consecutive_losses >= limits.stop_after_consecutive_losses:
         return False, "loss_streak_stop"
     if limits.max_trades_per_day and trades_today >= limits.max_trades_per_day:
         return False, "max_trades_per_day"

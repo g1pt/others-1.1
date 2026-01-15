@@ -29,6 +29,7 @@ class RulesetConfig:
 class PaperEngineConfig:
     mode: ExecutionMode = ExecutionMode.LOG_ONLY
     risk_limits: RiskLimits = RiskLimits()
+    risk_per_trade_pct: float = 0.005
     sl_pct: float = 0.002
     symbol_map: Mapping[str, str] = field(default_factory=dict)
     rulesets: Mapping[str, RulesetConfig] = field(default_factory=dict)

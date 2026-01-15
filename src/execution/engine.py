@@ -390,11 +390,10 @@ def run_paper_execute(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     risk_limits = RiskLimits(
-        risk_per_trade_pct=settings["risk_per_trade_pct"],
         max_trades_per_day=settings["max_trades_per_day"],
-        stop_after_losses=settings["stop_after_consecutive_losses"],
-        daily_dd_stop_pct=settings["daily_drawdown_stop_pct"],
-        hard_dd_cap_pct=settings["hard_max_drawdown_pct"],
+        stop_after_consecutive_losses=settings["stop_after_consecutive_losses"],
+        daily_drawdown_stop_pct=settings["daily_drawdown_stop_pct"],
+        hard_max_drawdown_pct=settings["hard_max_drawdown_pct"],
     )
 
     candles = _iter_candles(candles_df)
@@ -556,7 +555,13 @@ def run_paper_execute(
             log_rejection(signal, "invalid_payload")
             continue
         sl_price = compute_sl_price(signal.entry_price, direction, settings["st_pct"])
-        tp_price = compute_tp_price(signal.entry_price, sl_price, direction, settings["rr"])
+        signal_rr = getattr(signal, "rr", None)
+        rr_value = (
+            float(signal_rr)
+            if isinstance(signal_rr, (int, float)) and signal_rr > 0
+            else settings["rr"]
+        )
+        tp_price = compute_tp_price(signal.entry_price, sl_price, direction, rr_value)
         risk_cash = equity_current * settings["risk_per_trade_pct"]
         size = compute_position_size(equity_current, settings["risk_per_trade_pct"], signal.entry_price, sl_price)
         trade = PaperTrade(

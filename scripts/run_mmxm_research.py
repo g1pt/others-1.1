@@ -57,6 +57,7 @@ OB_TRADABLE_FIELD = "ob_tradable"
 @dataclass(frozen=True)
 class Step2PaperConfig:
     rr_default: float = 2.0
+    st_pct: float = 0.002
     max_trades_per_day: int = 1
     stop_after_consecutive_losses: int = 2
     daily_drawdown_stop_pct: float = 0.02
@@ -1049,10 +1050,12 @@ def _run_step2_paper_execute(
     print(
         "guards: "
         f"rr_default={step2_config.rr_default:.1f} "
+        f"st_pct={step2_config.st_pct:.3f} "
         f"max_trades_per_day={step2_config.max_trades_per_day} "
         f"stop_after_losses={step2_config.stop_after_consecutive_losses} "
         f"daily_dd={step2_config.daily_drawdown_stop_pct:.0%} "
-        f"hard_dd={step2_config.hard_max_drawdown_pct:.0%}"
+        f"hard_dd={step2_config.hard_max_drawdown_pct:.0%} "
+        f"risk_per_trade={step2_config.risk_per_trade_pct}"
     )
 
     signals: list[TradeSignal] = []
@@ -1083,7 +1086,7 @@ def _run_step2_paper_execute(
             "daily_drawdown_stop_pct": step2_config.daily_drawdown_stop_pct,
             "hard_max_drawdown_pct": step2_config.hard_max_drawdown_pct,
             "rr": step2_config.rr_default,
-            "st_pct": 0.002,
+            "st_pct": step2_config.st_pct,
             "timeframe": "30",
             "setup_id": "MMXM_4C_D",
             "entry_type": "Refinement",
@@ -1103,10 +1106,7 @@ def _run_step2_paper_execute(
     print(f"loss_streak_max={report['loss_streak_max']}")
 
     rejection_reasons = report.get("rejection_reasons", {})
-    print(
-        "top_rejection_reasons="
-        + json.dumps(rejection_reasons, sort_keys=True)
-    )
+    print("top_rejection_reasons=" + json.dumps(rejection_reasons, sort_keys=True))
 
 
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:

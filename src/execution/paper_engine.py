@@ -247,7 +247,7 @@ class PaperEngine:
         )
         qty = compute_qty(
             self.ledger.current_equity,
-            self.config.risk_limits.risk_per_trade_pct,
+            self.config.risk_per_trade_pct,
             event.entry_price,
             sl,
         )
@@ -255,7 +255,7 @@ class PaperEngine:
             self._log_rejection(payload, "invalid_payload")
             return False, "invalid_payload", None
 
-        risk_cash = self.ledger.current_equity * self.config.risk_limits.risk_per_trade_pct
+        risk_cash = self.ledger.current_equity * self.config.risk_per_trade_pct
         trade = PaperTrade(
             trade_id=str(uuid.uuid4()),
             symbol=event.symbol,

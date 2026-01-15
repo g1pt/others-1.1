@@ -56,12 +56,12 @@ _ENGINE = PaperEngine(
     PaperEngineConfig(
         mode=_resolve_mode(EXECUTION_MODE),
         risk_limits=RiskLimits(
-            risk_per_trade_pct=RISK_PCT_DEFAULT,
             max_trades_per_day=MAX_TRADES_PER_DAY,
-            stop_after_losses=MAX_CONSEC_LOSSES,
-            daily_dd_stop_pct=DD_DAILY_STOP,
-            hard_dd_cap_pct=DD_HARD_SYSTEM,
+            stop_after_consecutive_losses=MAX_CONSEC_LOSSES,
+            daily_drawdown_stop_pct=DD_DAILY_STOP,
+            hard_max_drawdown_pct=DD_HARD_SYSTEM,
         ),
+        risk_per_trade_pct=RISK_PCT_DEFAULT,
         sl_pct=SL_FIXED_PCT,
         symbol_map=SYMBOL_MAP,
         rulesets=_build_rulesets(),
