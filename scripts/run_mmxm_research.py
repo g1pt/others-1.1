@@ -28,6 +28,15 @@ from src.filtering import load_combo_filter  # noqa: E402
 from src.report import write_summary_csv, write_trades_csv  # noqa: E402
 from src.reporting import leakage_report  # noqa: E402
 from src.research.reporting import ob_failure_counts, top_candidates  # noqa: E402
+from src.execution import (  # noqa: E402
+    EngineConfig,
+    ExecutionEngine,
+    ExecutionMode,
+    EquityLedger,
+    RiskConfig,
+    SignalPayload,
+    TradeStatus,
+)
 
 DEFAULT_SYMBOL = "FX_SPX500"
 DEFAULT_TFS = [15, 30]
@@ -947,6 +956,63 @@ def _timeframe_label_from_path(path: Path) -> str:
     return "unknown"
 
 
+def _run_paper_execution(
+    trades,
+    candles: list[Candle],
+    instrument: str,
+    timeframe_label: str,
+    initial_equity: float,
+    risk_pct: float,
+) -> None:
+    print("\n=== Paper Execution (MMXM_4C_D) ===")
+    ledger = EquityLedger(
+        equity_current=initial_equity,
+        equity_start_day=initial_equity,
+    )
+    engine = ExecutionEngine(
+        config=EngineConfig(
+            mode=ExecutionMode.PAPER_SIM,
+            risk_per_trade=risk_pct,
+            sl_pct=0.002,
+            rr_default=2.0,
+            symbol_whitelist=frozenset({instrument, "SP500"}),
+            ruleset_whitelist=frozenset({"MMXM_4C_D"}),
+            timeframe_whitelist=frozenset({timeframe_label}),
+        ),
+        ledger=ledger,
+        risk_config=RiskConfig(
+            max_trades_per_day=1,
+            max_consecutive_losses=2,
+            daily_drawdown_limit_pct=2.0,
+            hard_drawdown_limit_pct=3.0,
+        ),
+        candles=candles,
+    )
+    accepted = 0
+    rejected = 0
+    for trade in sorted(trades, key=lambda t: t.entry_time):
+        decision = engine.accept_signal(
+            SignalPayload(
+                symbol=instrument,
+                timeframe=timeframe_label,
+                ruleset_id="MMXM_4C_D",
+                entry_time=trade.entry_time,
+                entry_price=trade.entry_price,
+                direction=trade.direction,
+                entry_type=trade.entry_method,
+                phase=trade.mmxm_phase,
+                ob_tradable=trade.ob_tradable,
+            )
+        )
+        if decision.status == TradeStatus.REJECTED:
+            rejected += 1
+        else:
+            accepted += 1
+    engine.finalize()
+    print(f"paper_trades_accepted={accepted}")
+    print(f"paper_trades_rejected={rejected}")
+
+
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -996,6 +1062,7 @@ def _run_instrument_step4c(
     risk_pct: float,
     max_dd_pct: float,
     max_trades_per_day: int,
+    paper_execute: bool,
 ) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -1034,6 +1101,15 @@ def _run_instrument_step4c(
         },
         _timeframe_label_from_path(path),
     )
+    if paper_execute:
+        _run_paper_execution(
+            step4d_trades,
+            candles,
+            instrument,
+            _timeframe_label_from_path(path),
+            initial_equity,
+            risk_pct,
+        )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1087,6 +1163,11 @@ def _parse_args() -> argparse.Namespace:
         "--self-test",
         action="store_true",
         help="Run basic sanity checks and exit.",
+    )
+    parser.add_argument(
+        "--paper-execute",
+        action="store_true",
+        help="Run paper execution on MMXM_4C_D trades and write logs.",
     )
     return parser.parse_args()
 
@@ -1168,6 +1249,7 @@ def main() -> None:
                 args.risk,
                 args.max_dd,
                 args.max_trades_day,
+                args.paper_execute,
             )
 
 
