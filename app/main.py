@@ -7,21 +7,68 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+from app.agent_rules import SYMBOL_MAP, SYMBOL_RULESETS
 from app.config import (
-    DEFAULT_EQUITY,
-    DEFAULT_RISK_PER_TRADE,
-    DEFAULT_RR,
-    DEFAULT_SL_PCT,
+    DD_DAILY_STOP,
+    DD_HARD_SYSTEM,
+    EXECUTION_MODE,
+    INITIAL_EQUITY,
     LOGS_DIR,
-    SYMBOL_MAP,
+    MAX_CONSEC_LOSSES,
+    MAX_TRADES_PER_DAY,
+    RISK_PCT_DEFAULT,
+    SL_FIXED_PCT,
     WEBHOOK_SECRET,
 )
 from app.models import TVWebhook
-from src.engine import build_default_spec, paper_execute, validate
-from src.storage.file_log import append_jsonl
+from src.execution.config import ExecutionMode, PaperEngineConfig, RulesetConfig
+from src.execution.ledger import Ledger
+from src.execution.paper_engine import PaperEngine
+from src.execution.risk import RiskLimits
 
 app = FastAPI()
-_SPEC = build_default_spec(SYMBOL_MAP)
+
+
+def _resolve_mode(mode: str) -> ExecutionMode:
+    try:
+        return ExecutionMode(mode)
+    except ValueError:
+        return ExecutionMode.LOG_ONLY
+
+
+def _build_rulesets() -> dict[str, RulesetConfig]:
+    rulesets: dict[str, RulesetConfig] = {}
+    for symbol, config in SYMBOL_RULESETS.items():
+        timeframes = sorted(config.get("allowed_timeframes", []))
+        timeframe = timeframes[0] if timeframes else ""
+        rulesets[symbol] = RulesetConfig(
+            setup_id=config["setup_id"],
+            timeframe=timeframe,
+            entry_type=config["entry_type"],
+            phase=config["phase"],
+            ob_tradability=config["ob_tradability"],
+            enabled=bool(config.get("enabled", True)),
+        )
+    return rulesets
+
+
+_ENGINE = PaperEngine(
+    PaperEngineConfig(
+        mode=_resolve_mode(EXECUTION_MODE),
+        risk_limits=RiskLimits(
+            risk_per_trade_pct=RISK_PCT_DEFAULT,
+            max_trades_per_day=MAX_TRADES_PER_DAY,
+            stop_after_losses=MAX_CONSEC_LOSSES,
+            daily_dd_stop_pct=DD_DAILY_STOP,
+            hard_dd_cap_pct=DD_HARD_SYSTEM,
+        ),
+        sl_pct=SL_FIXED_PCT,
+        symbol_map=SYMBOL_MAP,
+        rulesets=_build_rulesets(),
+        log_dir=LOGS_DIR,
+    ),
+    Ledger.load_or_init(LOGS_DIR, initial_equity=INITIAL_EQUITY),
+)
 
 
 @app.on_event("startup")
@@ -56,26 +103,25 @@ def tradingview_webhook(payload: TVWebhook) -> dict[str, Any]:
     event = payload.model_dump()
     event["received_utc"] = received
 
-    ok, reason, normalized = validate(event, spec=_SPEC, secret=WEBHOOK_SECRET)
-    if not ok:
-        event["rejected_reason"] = reason
-        append_jsonl("logs/paper_trades.log", event)
-        raise HTTPException(status_code=400, detail=reason)
+    if payload.secret != WEBHOOK_SECRET:
+        _ENGINE.ledger.record_rejection(event, "bad_secret")
+        _ENGINE.ledger.log_event(
+            {
+                "timestamp": received,
+                "accepted": False,
+                "reason": "bad_secret",
+                "event": event,
+            }
+        )
+        raise HTTPException(status_code=400, detail="secret mismatch")
 
-    append_jsonl("logs/paper_trades.log", normalized)
-    order = paper_execute(
-        normalized,
-        equity=DEFAULT_EQUITY,
-        risk_per_trade=DEFAULT_RISK_PER_TRADE,
-        rr=DEFAULT_RR,
-        sl_pct=DEFAULT_SL_PCT,
-    )
+    accepted, reason, trade_id = _ENGINE.process_signal(event)
     return {
         "ok": True,
-        "accepted": True,
+        "accepted": accepted,
+        "reason": None if accepted else reason,
         "paper": True,
-        "order_id": order.id,
-        "order": order.to_dict(),
+        "trade_id": trade_id,
     }
 
 

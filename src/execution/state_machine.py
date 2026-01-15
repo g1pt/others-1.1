@@ -24,10 +24,12 @@ class TradeStateMachine:
                         TradeStatus.REJECTED,
                     },
                     TradeStatus.OPEN: {
+                        TradeStatus.CLOSED,
                         TradeStatus.CLOSED_TP,
                         TradeStatus.CLOSED_SL,
                         TradeStatus.CLOSED_TIME,
                     },
+                    TradeStatus.CLOSED: set(),
                     TradeStatus.CLOSED_TP: set(),
                     TradeStatus.CLOSED_SL: set(),
                     TradeStatus.CLOSED_TIME: set(),
