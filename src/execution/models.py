@@ -6,6 +6,7 @@ from enum import Enum
 
 
 class TradeStatus(str, Enum):
+    RECEIVED = "RECEIVED"
     NEW = "NEW"
     OPEN = "OPEN"
     CLOSED = "CLOSED"
@@ -14,6 +15,27 @@ class TradeStatus(str, Enum):
     CLOSED_TIME = "CLOSED_TIME"
     INVALID = "INVALID"
     REJECTED = "REJECTED"
+
+
+class CloseReason(str, Enum):
+    TP = "TP"
+    SL = "SL"
+    TIME_STOP = "TIME_STOP"
+    INVALID = "INVALID"
+
+
+@dataclass(frozen=True)
+class TradeSignal:
+    external_symbol: str
+    internal_symbol: str
+    timeframe: str
+    setup_id: str
+    entry_time: str
+    entry_price: float
+    direction: str
+    entry_type: str
+    phase: str
+    ob_tradability: str
 
 
 @dataclass(frozen=True)
@@ -72,6 +94,8 @@ class PaperTrade:
     created_utc: str | None = None
     risk_cash: float | None = None
     rejection_reason: RejectionReason | None = None
+    external_symbol: str | None = None
+    internal_symbol: str | None = None
 
     @property
     def entry(self) -> float:
@@ -103,6 +127,18 @@ class DailySnapshot:
     max_dd_pct: float
     trades_count: int
     blocked_count: int
+
+
+@dataclass(frozen=True)
+class DailyLedger:
+    date: str
+    start_equity: float
+    end_equity: float
+    daily_low_equity: float
+    daily_realized_pnl: float
+    daily_drawdown_pct: float
+    trades_taken: int
+    consecutive_losses: int
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from .models import RejectionReason
 
@@ -40,6 +41,26 @@ def compute_qty(equity: float, risk_pct: float, entry: float, sl: float) -> floa
     return (equity * risk_pct) / distance
 
 
+def compute_position_size(equity: float, risk_per_trade: float, entry: float, sl: float) -> float:
+    """Alias for compute_qty with clarified naming for paper execution."""
+    return compute_qty(equity, risk_per_trade, entry, sl)
+
+
+def daily_key(value: datetime | date | str) -> str:
+    """Return YYYY-MM-DD from datetime/date/ISO string."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        cleaned = value.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(cleaned).date().isoformat()
+        except ValueError:
+            return cleaned[:10]
+    raise TypeError("Unsupported date type")
+
+
 def update_consecutive_losses(previous: int, trade_pnl_r: float) -> int:
     """Update consecutive losses counter based on trade outcome."""
     if trade_pnl_r < 0:
@@ -49,10 +70,14 @@ def update_consecutive_losses(previous: int, trade_pnl_r: float) -> int:
 
 def can_open_trade(
     ledger_state: dict[str, float | int],
-    trade_date: str,
-    limits: RiskLimits,
+    trade_date: str | RiskLimits | None,
+    limits: RiskLimits | None = None,
 ) -> tuple[bool, str | None]:
     """Return whether a trade can be opened based on ledger stats."""
+    if isinstance(trade_date, RiskLimits) and limits is None:
+        limits = trade_date
+    if limits is None:
+        raise ValueError("Risk limits must be provided")
     _ = trade_date
     trades_today = int(ledger_state.get("trades_today_count", 0))
     consecutive_losses = int(ledger_state.get("consecutive_losses", 0))

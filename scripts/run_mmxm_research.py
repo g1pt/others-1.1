@@ -35,8 +35,11 @@ from src.execution import (  # noqa: E402
     EquityLedger,
     RiskConfig,
     SignalPayload,
+    TradeSignal,
     TradeStatus,
+    run_paper_execute,
 )
+from src.execution.config import default_symbol_map  # noqa: E402
 
 DEFAULT_SYMBOL = "FX_SPX500"
 DEFAULT_TFS = [15, 30]
@@ -1013,6 +1016,82 @@ def _run_paper_execution(
     print(f"paper_trades_rejected={rejected}")
 
 
+def _timeframe_key(label: str) -> str:
+    cleaned = label.strip().lower()
+    if cleaned.endswith("m"):
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+def _run_step2_paper_execute(
+    trades,
+    candles: list[Candle],
+    instrument: str,
+    timeframe_label: str,
+    initial_equity: float,
+) -> None:
+    if _timeframe_key(timeframe_label) != "30":
+        return
+    print("\n==============================")
+    print("[STEP2] PAPER EXECUTE (30m, RR=2.0)")
+    print("==============================")
+
+    signals: list[TradeSignal] = []
+    for trade in trades:
+        signals.append(
+            TradeSignal(
+                external_symbol=instrument,
+                internal_symbol=instrument,
+                timeframe=_timeframe_key(timeframe_label),
+                setup_id="MMXM_4C_D",
+                entry_time=trade.entry_time,
+                entry_price=trade.entry_price,
+                direction=trade.direction,
+                entry_type=_normalize_entry_type(trade),
+                phase=_normalize_phase(trade),
+                ob_tradability=_normalize_tradability(trade),
+            )
+        )
+
+    report = run_paper_execute(
+        signals,
+        candles,
+        {
+            "initial_equity": initial_equity,
+            "risk_per_trade_pct": 0.005,
+            "max_trades_per_day": 1,
+            "stop_after_consecutive_losses": 2,
+            "daily_drawdown_stop_pct": 0.02,
+            "hard_max_drawdown_pct": 0.03,
+            "rr": 2.0,
+            "st_pct": 0.002,
+            "timeframe": "30",
+            "setup_id": "MMXM_4C_D",
+            "entry_type": "Refinement",
+            "phase": "Manipulation",
+            "ob_tradability": "Tradable",
+            "symbol_map": default_symbol_map(),
+        },
+    )
+
+    print(f"trades_received={report['trades_received']}")
+    print(f"trades_rejected={report['trades_rejected']}")
+    print(f"trades_opened={report['trades_opened']}")
+    print(f"trades_closed={report['trades_closed']}")
+    print(f"end_equity={report['end_equity']:.2f}")
+    print(f"total_return_pct={report['total_return_pct']:.2f}")
+    print(f"max_drawdown_pct={report['max_drawdown_pct']:.2f}")
+    print(f"loss_streak_max={report['loss_streak_max']}")
+
+    rejection_reasons = report.get("rejection_reasons", {})
+    if rejection_reasons:
+        print("top_rejection_reasons")
+        for reason, count in sorted(
+            rejection_reasons.items(), key=lambda item: (-item[1], item[0])
+        ):
+            print(f"{reason}={count}")
+
+
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -1100,6 +1179,13 @@ def _run_instrument_step4c(
             "sl_pct": 0.002,
         },
         _timeframe_label_from_path(path),
+    )
+    _run_step2_paper_execute(
+        step4d_trades,
+        candles,
+        instrument,
+        _timeframe_label_from_path(path),
+        initial_equity,
     )
     if paper_execute:
         _run_paper_execution(
