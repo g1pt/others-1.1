@@ -54,6 +54,16 @@ PHASE_FIELD = "mmxm_phase"
 OB_TRADABLE_FIELD = "ob_tradable"
 
 
+@dataclass(frozen=True)
+class Step2PaperConfig:
+    rr_default: float = 2.0
+    max_trades_per_day: int = 1
+    stop_after_consecutive_losses: int = 2
+    daily_drawdown_stop_pct: float = 0.02
+    hard_max_drawdown_pct: float = 0.03
+    risk_per_trade_pct: float = 0.005
+
+
 @dataclass
 class SimulationResult:
     taken_trades: list
@@ -1032,9 +1042,18 @@ def _run_step2_paper_execute(
 ) -> None:
     if _timeframe_key(timeframe_label) != "30":
         return
+    step2_config = Step2PaperConfig()
     print("\n==============================")
     print("[STEP2] PAPER EXECUTE (30m, RR=2.0)")
     print("==============================")
+    print(
+        "guards: "
+        f"rr_default={step2_config.rr_default:.1f} "
+        f"max_trades_per_day={step2_config.max_trades_per_day} "
+        f"stop_after_losses={step2_config.stop_after_consecutive_losses} "
+        f"daily_dd={step2_config.daily_drawdown_stop_pct:.0%} "
+        f"hard_dd={step2_config.hard_max_drawdown_pct:.0%}"
+    )
 
     signals: list[TradeSignal] = []
     for trade in trades:
@@ -1058,12 +1077,12 @@ def _run_step2_paper_execute(
         candles,
         {
             "initial_equity": initial_equity,
-            "risk_per_trade_pct": 0.005,
-            "max_trades_per_day": 1,
-            "stop_after_consecutive_losses": 2,
-            "daily_drawdown_stop_pct": 0.02,
-            "hard_max_drawdown_pct": 0.03,
-            "rr": 2.0,
+            "risk_per_trade_pct": step2_config.risk_per_trade_pct,
+            "max_trades_per_day": step2_config.max_trades_per_day,
+            "stop_after_consecutive_losses": step2_config.stop_after_consecutive_losses,
+            "daily_drawdown_stop_pct": step2_config.daily_drawdown_stop_pct,
+            "hard_max_drawdown_pct": step2_config.hard_max_drawdown_pct,
+            "rr": step2_config.rr_default,
             "st_pct": 0.002,
             "timeframe": "30",
             "setup_id": "MMXM_4C_D",
@@ -1084,12 +1103,10 @@ def _run_step2_paper_execute(
     print(f"loss_streak_max={report['loss_streak_max']}")
 
     rejection_reasons = report.get("rejection_reasons", {})
-    if rejection_reasons:
-        print("top_rejection_reasons")
-        for reason, count in sorted(
-            rejection_reasons.items(), key=lambda item: (-item[1], item[0])
-        ):
-            print(f"{reason}={count}")
+    print(
+        "top_rejection_reasons="
+        + json.dumps(rejection_reasons, sort_keys=True)
+    )
 
 
 def _run_instrument_baseline(path: Path, runs_dir: Path, combo_filter) -> None:

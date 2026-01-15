@@ -85,13 +85,13 @@ def can_open_trade(
     overall_dd = float(ledger_state.get("overall_drawdown_pct", 0.0))
 
     if limits.hard_dd_cap_pct and overall_dd >= limits.hard_dd_cap_pct:
-        return False, "hard_dd_cap"
+        return False, "hard_drawdown_stop"
     if limits.daily_dd_stop_pct and daily_dd >= limits.daily_dd_stop_pct:
-        return False, "daily_dd_stop"
+        return False, "daily_drawdown_stop"
     if limits.stop_after_losses and consecutive_losses >= limits.stop_after_losses:
         return False, "loss_streak_stop"
     if limits.max_trades_per_day and trades_today >= limits.max_trades_per_day:
-        return False, "max_trades_day"
+        return False, "max_trades_per_day"
     return True, None
 
 def can_take_trade(today_stats: dict[str, float | int], config: RiskConfig) -> tuple[bool, RejectionReason | None]:
@@ -112,7 +112,7 @@ def can_take_trade(today_stats: dict[str, float | int], config: RiskConfig) -> t
         )
     if config.daily_drawdown_limit_pct and daily_drawdown_pct >= config.daily_drawdown_limit_pct:
         return False, RejectionReason(
-            code="daily_drawdown_limit",
+            code="daily_drawdown_stop",
             message="Daily drawdown limit reached",
             details={
                 "daily_drawdown_pct": daily_drawdown_pct,
@@ -121,7 +121,7 @@ def can_take_trade(today_stats: dict[str, float | int], config: RiskConfig) -> t
         )
     if config.max_consecutive_losses and consecutive_losses >= config.max_consecutive_losses:
         return False, RejectionReason(
-            code="consecutive_losses",
+            code="loss_streak_stop",
             message="Consecutive loss limit reached",
             details={
                 "consecutive_losses": consecutive_losses,
