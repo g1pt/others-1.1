@@ -23,6 +23,9 @@ class RiskLimits:
     hard_max_drawdown_pct: float = 0.03
 
 
+RiskLimit = RiskLimits  # compat alias
+
+
 def compute_sl(entry: float, direction: str, st_pct: float = 0.002) -> float:
     """Compute a fixed-percentage stop loss level."""
     if direction == "buy":
