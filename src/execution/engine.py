@@ -481,15 +481,15 @@ def run_paper_execute(
 
     def gate_signal(signal: TradeSignal) -> str | None:
         if _normalize_timeframe(signal.timeframe) != _normalize_timeframe(settings["timeframe"]):
-            return "timeframe_gate"
+            return "gate_fail"
         if signal.setup_id != settings["setup_id"]:
-            return "ruleset_gate"
+            return "gate_fail"
         if settings["entry_type"].lower() not in signal.entry_type.lower():
-            return "entry_type_gate"
+            return "gate_fail"
         if signal.phase.lower() != settings["phase"].lower():
-            return "phase_gate"
+            return "gate_fail"
         if str(signal.ob_tradability).lower() != settings["ob_tradability"].lower():
-            return "ob_tradability_gate"
+            return "gate_fail"
         return None
 
     sorted_signals = sorted(
@@ -553,7 +553,7 @@ def run_paper_execute(
 
         direction = _normalize_direction(signal.direction)
         if direction not in {"buy", "sell"}:
-            log_rejection(signal, "direction_gate")
+            log_rejection(signal, "invalid_payload")
             continue
         sl_price = compute_sl_price(signal.entry_price, direction, settings["st_pct"])
         tp_price = compute_tp_price(signal.entry_price, sl_price, direction, settings["rr"])
