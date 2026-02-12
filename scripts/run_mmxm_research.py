@@ -5,6 +5,7 @@ import argparse
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 import json
+import os
 from pathlib import Path
 import re
 import statistics
@@ -63,6 +64,26 @@ class Step2PaperConfig:
     daily_drawdown_stop_pct: float = 0.02
     hard_max_drawdown_pct: float = 0.03
     risk_per_trade_pct: float = 0.005
+    risk_mode: str = "fixed_per_trade"
+    daily_risk_budget_pct: float = 0.02
+    min_risk_per_trade_pct: float = 0.003
+    max_risk_per_trade_pct: float = 0.01
+
+    @classmethod
+    def from_env(cls) -> "Step2PaperConfig":
+        return cls(
+            rr_default=float(os.getenv("RR_DEFAULT", "2.0")),
+            st_pct=float(os.getenv("ST_PCT", "0.002")),
+            max_trades_per_day=int(os.getenv("MAX_TRADES_PER_DAY", "1")),
+            stop_after_consecutive_losses=int(os.getenv("MAX_CONSEC_LOSSES", "2")),
+            daily_drawdown_stop_pct=float(os.getenv("DAILY_DD_STOP_PCT", "0.02")),
+            hard_max_drawdown_pct=float(os.getenv("HARD_DD_STOP_PCT", "0.03")),
+            risk_per_trade_pct=float(os.getenv("RISK_PER_TRADE_PCT", str(cls.risk_per_trade_pct))),
+            risk_mode=os.getenv("RISK_MODE", "fixed_per_trade"),
+            daily_risk_budget_pct=float(os.getenv("DAILY_RISK_BUDGET_PCT", "0.02")),
+            min_risk_per_trade_pct=float(os.getenv("MIN_RISK_PER_TRADE_PCT", "0.003")),
+            max_risk_per_trade_pct=float(os.getenv("MAX_RISK_PER_TRADE_PCT", "0.01")),
+        )
 
 
 @dataclass
@@ -94,11 +115,14 @@ def _data_roots() -> list[Path]:
 
 def _dataset_names(symbol: str, tfs: list[int]) -> set[str]:
     normalized = symbol.strip().lower()
-    names = set()
-    for tf in tfs:
-        names.add(f"{normalized}, {tf}.csv")
-        names.add(f"{normalized}, {tf}.xlsx")
-    return names
+    return {f"{normalized}, {tf}" for tf in tfs}
+
+
+def _canonical_dataset_key(path: Path) -> str:
+    stem = path.stem.strip().lower()
+    # tolerate copy suffixes like "(1)" that Windows appends on duplicates
+    stem = re.sub(r"\s*\(\d+\)$", "", stem).strip()
+    return stem
 
 
 def _find_data_files(include_all: bool, symbol: str, tfs: list[int]) -> list[Path]:
@@ -109,8 +133,17 @@ def _find_data_files(include_all: bool, symbol: str, tfs: list[int]) -> list[Pat
     if include_all:
         return files
     targets = _dataset_names(symbol, tfs)
-    return [path for path in files if path.name.lower() in targets]
+    return [path for path in files if _canonical_dataset_key(path) in targets]
 
+
+
+
+def _resolve_data_files(include_all: bool, symbol: str, tfs: list[int]) -> tuple[list[Path], bool]:
+    files = _find_data_files(include_all, symbol, tfs)
+    if files or include_all:
+        return files, False
+    fallback_files = _find_data_files(True, symbol, tfs)
+    return fallback_files, bool(fallback_files)
 
 def _instrument_from_path(path: Path) -> str:
     match = re.search(r"([A-Z]{6})", path.stem.upper())
@@ -1043,7 +1076,7 @@ def _run_step2_paper_execute(
 ) -> None:
     if _timeframe_key(timeframe_label) != "30":
         return
-    step2_config = Step2PaperConfig()
+    step2_config = Step2PaperConfig.from_env()
     print("\n==============================")
     print("[STEP2] PAPER EXECUTE (30m, RR=2.0)")
     print("==============================")
@@ -1055,7 +1088,11 @@ def _run_step2_paper_execute(
         f"stop_after_losses={step2_config.stop_after_consecutive_losses} "
         f"daily_dd={step2_config.daily_drawdown_stop_pct:.0%} "
         f"hard_dd={step2_config.hard_max_drawdown_pct:.0%} "
-        f"risk_per_trade={step2_config.risk_per_trade_pct}"
+        f"risk_per_trade={step2_config.risk_per_trade_pct} "
+        f"risk_mode={step2_config.risk_mode} "
+        f"daily_budget_pct={step2_config.daily_risk_budget_pct} "
+        f"min_risk={step2_config.min_risk_per_trade_pct} "
+        f"max_risk={step2_config.max_risk_per_trade_pct}"
     )
 
     signals: list[TradeSignal] = []
@@ -1087,6 +1124,10 @@ def _run_step2_paper_execute(
             "hard_max_drawdown_pct": step2_config.hard_max_drawdown_pct,
             "rr": step2_config.rr_default,
             "st_pct": step2_config.st_pct,
+            "risk_mode": step2_config.risk_mode,
+            "daily_risk_budget_pct": step2_config.daily_risk_budget_pct,
+            "min_risk_per_trade_pct": step2_config.min_risk_per_trade_pct,
+            "max_risk_per_trade_pct": step2_config.max_risk_per_trade_pct,
             "timeframe": "30",
             "setup_id": "MMXM_4C_D",
             "entry_type": "Refinement",
@@ -1333,9 +1374,11 @@ def main() -> None:
         return
 
     _validate_risk_pct(args.risk)
-    files = _find_data_files(args.all_datasets, args.symbol, args.tfs)
+    files, used_fallback = _resolve_data_files(args.all_datasets, args.symbol, args.tfs)
     if not files:
         raise SystemExit("No CSV/XLSX files found in /data or ./data")
+    if used_fallback:
+        print("No default symbol/timeframe match found; falling back to all datasets in data roots.")
 
     combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
 
