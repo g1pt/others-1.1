@@ -66,3 +66,11 @@ Health check:
 - `MAX_RISK_PER_TRADE_PCT=0.02`
 
 Als `RISK_MODE=daily_budget`, dan verdeelt de engine het dagbudget over de resterende trade-slots van die dag.
+
+## SP500 lot-size referentie (CFD)
+- Bij veel CFD-brokers geldt vaak:
+  - `1.0 lot ≈ $10 per punt`
+  - `0.1 lot ≈ $1 per punt`
+  - `0.01 lot ≈ $0.10 per punt`
+- Dit verschilt per broker/symbool. Controleer altijd in MT5:
+  - Right click op symbool → `Specification` → `Contract Size`.
