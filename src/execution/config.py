@@ -30,6 +30,10 @@ class PaperEngineConfig:
     mode: ExecutionMode = ExecutionMode.LOG_ONLY
     risk_limits: RiskLimits = RiskLimits()
     risk_per_trade_pct: float = 0.005
+    risk_mode: str = "fixed_per_trade"
+    daily_risk_budget_pct: float = 0.02
+    min_risk_per_trade_pct: float = 0.001
+    max_risk_per_trade_pct: float = 0.02
     sl_pct: float = 0.002
     symbol_map: Mapping[str, str] = field(default_factory=dict)
     rulesets: Mapping[str, RulesetConfig] = field(default_factory=dict)

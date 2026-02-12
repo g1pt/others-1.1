@@ -25,6 +25,7 @@ others-1.1/
 - `docs/mmxm_research_spec_v1.md` — MMXM research specification (v1, NL).
 - `docs/smart_money_entry_types_questions.md` — Smart Money Entry Types research questions (NL).
 - `docs/codex_filtering_strategy.md` — Codex filter prompt for expectancy/trade-count screening (NL).
+- `docs/scalping_bot_roadmap.md` — roadmap voor snellere scalping-bot + testplan (NL).
 
 ## CLI
 - Run research: `python -m scripts.run_mmxm_research`
@@ -56,3 +57,12 @@ Test (PowerShell):
 
 Health check:
   Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/health"
+
+
+## Risk mode (paper engine)
+- `RISK_MODE=fixed_per_trade|daily_budget`
+- `DAILY_RISK_BUDGET_PCT=0.02` (bijv. 2% equity per dag)
+- `MIN_RISK_PER_TRADE_PCT=0.001`
+- `MAX_RISK_PER_TRADE_PCT=0.02`
+
+Als `RISK_MODE=daily_budget`, dan verdeelt de engine het dagbudget over de resterende trade-slots van die dag.
