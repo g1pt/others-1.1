@@ -136,6 +136,15 @@ def _find_data_files(include_all: bool, symbol: str, tfs: list[int]) -> list[Pat
     return [path for path in files if _canonical_dataset_key(path) in targets]
 
 
+
+
+def _resolve_data_files(include_all: bool, symbol: str, tfs: list[int]) -> tuple[list[Path], bool]:
+    files = _find_data_files(include_all, symbol, tfs)
+    if files or include_all:
+        return files, False
+    fallback_files = _find_data_files(True, symbol, tfs)
+    return fallback_files, bool(fallback_files)
+
 def _instrument_from_path(path: Path) -> str:
     match = re.search(r"([A-Z]{6})", path.stem.upper())
     if match:
@@ -1365,9 +1374,11 @@ def main() -> None:
         return
 
     _validate_risk_pct(args.risk)
-    files = _find_data_files(args.all_datasets, args.symbol, args.tfs)
+    files, used_fallback = _resolve_data_files(args.all_datasets, args.symbol, args.tfs)
     if not files:
         raise SystemExit("No CSV/XLSX files found in /data or ./data")
+    if used_fallback:
+        print("No default symbol/timeframe match found; falling back to all datasets in data roots.")
 
     combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
 
