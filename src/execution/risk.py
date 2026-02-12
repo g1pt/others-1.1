@@ -26,6 +26,16 @@ class RiskLimits:
 RiskLimit = RiskLimits  # compat alias
 
 
+def calc_risk_pct_fixed(cfg) -> float:
+    """Return fixed per-trade risk percentage from config-like object."""
+    return float(getattr(cfg, "risk_per_trade_pct", 0.0))
+
+
+def calc_position_size(entry: float, sl: float, risk_pct: float, equity: float) -> float:
+    """Compute position size from entry/SL distance, risk pct and equity."""
+    return compute_qty(equity, risk_pct, entry, sl)
+
+
 def compute_sl(entry: float, direction: str, st_pct: float = 0.002) -> float:
     """Compute a fixed-percentage stop loss level."""
     if direction == "buy":
