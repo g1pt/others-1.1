@@ -231,7 +231,8 @@ class PaperEngine:
             self._log_accept(payload)
             return True, "ok", None
 
-        can_open, reason = can_open_trade(self.ledger.state(), event.entry_time, self.config.risk_limits)
+        ledger_state = self.ledger.state()
+        can_open, reason = can_open_trade(ledger_state, event.entry_time, self.config.risk_limits)
         if not can_open:
             self._log_rejection(payload, reason or "risk_blocked")
             return False, reason or "risk_blocked", None
@@ -245,9 +246,20 @@ class PaperEngine:
             event.symbol,
             event.setup,
         )
+        risk_pct = self.config.risk_per_trade_pct
+        if self.config.risk_mode == "daily_budget":
+            trades_today = int(ledger_state.get("trades_today_count", 0))
+            max_trades = max(1, self.config.risk_limits.max_trades_per_day or 1)
+            remaining_slots = max(1, max_trades - trades_today)
+            base_daily_share = self.config.daily_risk_budget_pct / remaining_slots
+            risk_pct = min(
+                self.config.max_risk_per_trade_pct,
+                max(self.config.min_risk_per_trade_pct, base_daily_share),
+            )
+
         qty = compute_qty(
             self.ledger.current_equity,
-            self.config.risk_per_trade_pct,
+            risk_pct,
             event.entry_price,
             sl,
         )
@@ -255,7 +267,7 @@ class PaperEngine:
             self._log_rejection(payload, "invalid_payload")
             return False, "invalid_payload", None
 
-        risk_cash = self.ledger.current_equity * self.config.risk_per_trade_pct
+        risk_cash = self.ledger.current_equity * risk_pct
         trade = PaperTrade(
             trade_id=str(uuid.uuid4()),
             symbol=event.symbol,

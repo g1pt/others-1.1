@@ -31,6 +31,10 @@ def _get_int(name: str, default: int) -> int:
 
 INITIAL_EQUITY = _get_float("INITIAL_EQUITY", 10000.0)
 RISK_PCT_DEFAULT = _get_float("RISK_PCT_DEFAULT", 0.005)
+RISK_MODE = os.getenv("RISK_MODE", "fixed_per_trade")
+DAILY_RISK_BUDGET_PCT = _get_float("DAILY_RISK_BUDGET_PCT", 0.02)
+MIN_RISK_PER_TRADE_PCT = _get_float("MIN_RISK_PER_TRADE_PCT", 0.001)
+MAX_RISK_PER_TRADE_PCT = _get_float("MAX_RISK_PER_TRADE_PCT", 0.02)
 RISK_PCT_MAX = _get_float("RISK_PCT_MAX", 0.01)
 DD_SOFT = _get_float("DD_SOFT", 0.02)
 REDUCED_RISK_PCT = _get_float("REDUCED_RISK_PCT", 0.0025)
