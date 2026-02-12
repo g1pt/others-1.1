@@ -12,6 +12,8 @@ from app.config import (
     RISK_PCT_DEFAULT,
     RISK_PCT_MAX,
     RR_DEFAULT,
+    BE_TRIGGER_EURUSD,
+    BE_TRIGGER_SP500,
     SL_DISTANCE_MODE,
     SL_FIXED_PCT,
 )
@@ -141,7 +143,34 @@ def parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
+
+
+def _be_trigger_distance(symbol: str, entry_price: float) -> float:
+    normalized = symbol.upper()
+    if normalized == "EURUSD":
+        return BE_TRIGGER_EURUSD
+    if normalized == "SP500":
+        return BE_TRIGGER_SP500
+    return 0.0
+
+
+def _apply_break_even(order: PaperOrder, candle: Candle) -> None:
+    if order.status != "OPEN":
+        return
+    trigger_distance = _be_trigger_distance(order.symbol, order.entry_price)
+    if trigger_distance <= 0:
+        return
+
+    if order.direction == "buy":
+        if candle.high - order.entry_price >= trigger_distance:
+            order.stop_loss = max(order.stop_loss, order.entry_price)
+    else:
+        if order.entry_price - candle.low >= trigger_distance:
+            order.stop_loss = min(order.stop_loss, order.entry_price)
+
 def evaluate_candle_hit(order: PaperOrder, candle: Candle) -> tuple[bool, str, float, float]:
+    _apply_break_even(order, candle)
+
     sl_hit = False
     tp_hit = False
     if order.direction == "buy":
@@ -152,12 +181,12 @@ def evaluate_candle_hit(order: PaperOrder, candle: Candle) -> tuple[bool, str, f
         tp_hit = candle.low <= order.take_profit
 
     if sl_hit and tp_hit:
-        pnl_r = -1.0
         exit_price = order.stop_loss
+        pnl_r = 0.0 if exit_price == order.entry_price else -1.0
         return True, "stop_loss", pnl_r, exit_price
     if sl_hit:
-        pnl_r = -1.0
         exit_price = order.stop_loss
+        pnl_r = 0.0 if exit_price == order.entry_price else -1.0
         return True, "stop_loss", pnl_r, exit_price
     if tp_hit:
         pnl_r = RR_DEFAULT
