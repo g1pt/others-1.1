@@ -115,11 +115,14 @@ def _data_roots() -> list[Path]:
 
 def _dataset_names(symbol: str, tfs: list[int]) -> set[str]:
     normalized = symbol.strip().lower()
-    names = set()
-    for tf in tfs:
-        names.add(f"{normalized}, {tf}.csv")
-        names.add(f"{normalized}, {tf}.xlsx")
-    return names
+    return {f"{normalized}, {tf}" for tf in tfs}
+
+
+def _canonical_dataset_key(path: Path) -> str:
+    stem = path.stem.strip().lower()
+    # tolerate copy suffixes like "(1)" that Windows appends on duplicates
+    stem = re.sub(r"\s*\(\d+\)$", "", stem).strip()
+    return stem
 
 
 def _find_data_files(include_all: bool, symbol: str, tfs: list[int]) -> list[Path]:
@@ -130,7 +133,7 @@ def _find_data_files(include_all: bool, symbol: str, tfs: list[int]) -> list[Pat
     if include_all:
         return files
     targets = _dataset_names(symbol, tfs)
-    return [path for path in files if path.name.lower() in targets]
+    return [path for path in files if _canonical_dataset_key(path) in targets]
 
 
 def _instrument_from_path(path: Path) -> str:
