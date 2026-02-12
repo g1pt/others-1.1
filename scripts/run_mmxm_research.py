@@ -1073,10 +1073,13 @@ def _run_step2_paper_execute(
     instrument: str,
     timeframe_label: str,
     initial_equity: float,
+    step2_overrides: dict | None = None,
 ) -> None:
     if _timeframe_key(timeframe_label) != "30":
         return
     step2_config = Step2PaperConfig.from_env()
+    if step2_overrides:
+        step2_config = replace(step2_config, **step2_overrides)
     print("\n==============================")
     print("[STEP2] PAPER EXECUTE (30m, RR=2.0)")
     print("==============================")
@@ -1200,6 +1203,7 @@ def _run_instrument_step4c(
     max_dd_pct: float,
     max_trades_per_day: int,
     paper_execute: bool,
+    step2_overrides: dict | None = None,
 ) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
@@ -1244,6 +1248,7 @@ def _run_instrument_step4c(
         instrument,
         _timeframe_label_from_path(path),
         initial_equity,
+        step2_overrides,
     )
     if paper_execute:
         _run_paper_execution(
@@ -1313,6 +1318,36 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run paper execution on MMXM_4C_D trades and write logs.",
     )
+    parser.add_argument(
+        "--paper-risk-pct",
+        type=float,
+        default=None,
+        help="Override STEP2 paper-execute risk per trade pct (e.g. 0.03).",
+    )
+    parser.add_argument(
+        "--paper-max-trades-day",
+        type=int,
+        default=None,
+        help="Override STEP2 paper-execute max trades per day.",
+    )
+    parser.add_argument(
+        "--paper-stop-after-losses",
+        type=int,
+        default=None,
+        help="Override STEP2 paper-execute consecutive loss stop.",
+    )
+    parser.add_argument(
+        "--paper-daily-dd",
+        type=float,
+        default=None,
+        help="Override STEP2 paper-execute daily drawdown stop pct.",
+    )
+    parser.add_argument(
+        "--paper-hard-dd",
+        type=float,
+        default=None,
+        help="Override STEP2 paper-execute hard drawdown stop pct.",
+    )
     return parser.parse_args()
 
 
@@ -1381,6 +1416,17 @@ def main() -> None:
         print("No default symbol/timeframe match found; falling back to all datasets in data roots.")
 
     combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
+    step2_overrides = {
+        key: value
+        for key, value in {
+            "risk_per_trade_pct": args.paper_risk_pct,
+            "max_trades_per_day": args.paper_max_trades_day,
+            "stop_after_consecutive_losses": args.paper_stop_after_losses,
+            "daily_drawdown_stop_pct": args.paper_daily_dd,
+            "hard_max_drawdown_pct": args.paper_hard_dd,
+        }.items()
+        if value is not None
+    }
 
     for path in files:
         if args.baseline:
@@ -1396,6 +1442,7 @@ def main() -> None:
                 args.max_dd,
                 args.max_trades_day,
                 args.paper_execute,
+                step2_overrides,
             )
 
 
