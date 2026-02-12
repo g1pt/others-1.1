@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .config import default_symbol_map
+from .logging_utils import log_line, write_state
 from .models import CloseReason, DailyLedger, TradeSignal
-from .risk import RiskLimits, can_open_trade, compute_position_size, daily_key
+from .risk import RiskLimits, calc_position_size, can_open_trade, daily_key
 from .simulator import determine_exit
 from .tp_sl import compute_sl as compute_sl_price
 from .tp_sl import compute_tp as compute_tp_price
@@ -370,6 +371,10 @@ def run_paper_execute(
     defaults = {
         "initial_equity": 10000.0,
         "risk_per_trade_pct": 0.005,
+        "risk_mode": "fixed_per_trade",
+        "daily_risk_budget_pct": 0.02,
+        "min_risk_per_trade_pct": 0.003,
+        "max_risk_per_trade_pct": 0.01,
         "max_trades_per_day": 1,
         "stop_after_consecutive_losses": 2,
         "daily_drawdown_stop_pct": 0.02,
@@ -389,6 +394,12 @@ def run_paper_execute(
     log_dir: Path = settings["log_dir"]
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    trades_log_path = log_dir / "paper_exec_trades.jsonl"
+    equity_log_path = log_dir / "equity_by_day.csv"
+    rejection_log_path = log_dir / "rejections.jsonl"
+    stream_log_path = log_dir / "paper_trades.log"
+    state_path = log_dir / "paper_state.json"
+
     risk_limits = RiskLimits(
         max_trades_per_day=settings["max_trades_per_day"],
         stop_after_consecutive_losses=settings["stop_after_consecutive_losses"],
@@ -401,10 +412,6 @@ def run_paper_execute(
         _candle_timestamp(candle): idx for idx, candle in enumerate(candles) if _candle_timestamp(candle)
     }
 
-    trades_log_path = log_dir / "paper_exec_trades.jsonl"
-    equity_log_path = log_dir / "equity_by_day.csv"
-    rejection_log_path = log_dir / "rejections.jsonl"
-
     equity_current = float(settings["initial_equity"])
     equity_high = equity_current
     max_drawdown_pct = 0.0
@@ -414,46 +421,66 @@ def run_paper_execute(
     trades_rejected = 0
     trades_opened = 0
     trades_closed = 0
-    rejection_counts: dict[str, int] = {}
+    rejection_counts: dict[str, int] = {
+        "max_trades_per_day": 0,
+        "loss_streak_stop": 0,
+        "daily_drawdown_stop": 0,
+        "hard_drawdown_stop": 0,
+        "invalid_payload": 0,
+        "gate_fail": 0,
+    }
     trades: list[PaperTrade] = []
     daily_ledgers: list[DailyLedger] = []
 
     current_day: str | None = None
-    daily_start_equity = equity_current
-    daily_low_equity = equity_current
-    daily_realized_pnl = 0.0
+    day_start_equity = equity_current
+    day_realized_pnl = 0.0
+    day_drawdown_pct = 0.0
     trades_today = 0
 
-    def finalize_day(day_key: str) -> None:
-        daily_drawdown_pct = (
-            (daily_start_equity - daily_low_equity) / daily_start_equity
-            if daily_start_equity
-            else 0.0
+    def _write_state(last_event_time: str) -> None:
+        drawdown_pct = ((equity_high - equity_current) / equity_high) if equity_high else 0.0
+        write_state(
+            {
+                "equity": equity_current,
+                "drawdown_pct": drawdown_pct,
+                "loss_streak": loss_streak,
+                "trades_taken_today": trades_today,
+                "rejection_counts": rejection_counts,
+                "last_event_time": last_event_time,
+            },
+            state_path,
         )
+
+    def finalize_day(day_key: str) -> None:
         daily_ledgers.append(
             DailyLedger(
                 date=day_key,
-                start_equity=daily_start_equity,
+                start_equity=day_start_equity,
                 end_equity=equity_current,
-                daily_low_equity=daily_low_equity,
-                daily_realized_pnl=daily_realized_pnl,
-                daily_drawdown_pct=daily_drawdown_pct,
+                daily_low_equity=min(day_start_equity, equity_current),
+                daily_realized_pnl=day_realized_pnl,
+                daily_drawdown_pct=day_drawdown_pct,
                 trades_taken=trades_today,
                 consecutive_losses=loss_streak,
             )
         )
 
-    def log_rejection(signal: TradeSignal, reason: str) -> None:
+    def log_rejection(signal: TradeSignal, reason: str, detail: str | None = None) -> None:
         nonlocal trades_rejected
         trades_rejected += 1
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
         payload = {
             "timestamp": signal.entry_time,
             "reason": reason,
+            "detail": detail,
             "signal": signal.__dict__,
         }
         with rejection_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload) + "\n")
+        extra = f":{detail}" if detail else ""
+        log_line(f"[paper] REJECT reason={reason}{extra} t={signal.entry_time}", stream_log_path)
+        _write_state(signal.entry_time)
 
     def log_trade(trade: PaperTrade) -> None:
         payload = {
@@ -480,21 +507,18 @@ def run_paper_execute(
 
     def gate_signal(signal: TradeSignal) -> str | None:
         if _normalize_timeframe(signal.timeframe) != _normalize_timeframe(settings["timeframe"]):
-            return "gate_fail"
+            return "session"
         if signal.setup_id != settings["setup_id"]:
-            return "gate_fail"
+            return "setup"
         if settings["entry_type"].lower() not in signal.entry_type.lower():
-            return "gate_fail"
+            return "entry_type"
         if signal.phase.lower() != settings["phase"].lower():
-            return "gate_fail"
+            return "phase"
         if str(signal.ob_tradability).lower() != settings["ob_tradability"].lower():
-            return "gate_fail"
+            return "ob_tradability"
         return None
 
-    sorted_signals = sorted(
-        signals,
-        key=lambda s: _parse_datetime(s.entry_time) or datetime.min,
-    )
+    sorted_signals = sorted(signals, key=lambda s: _parse_datetime(s.entry_time) or datetime.min)
 
     for idx, signal in enumerate(sorted_signals, start=1):
         trades_received += 1
@@ -514,34 +538,27 @@ def run_paper_execute(
         day_key = daily_key(signal.entry_time)
         if current_day is None:
             current_day = day_key
+            day_start_equity = equity_current
         if day_key != current_day:
             finalize_day(current_day)
             current_day = day_key
-            daily_start_equity = equity_current
-            daily_low_equity = equity_current
-            daily_realized_pnl = 0.0
+            day_start_equity = equity_current
+            day_realized_pnl = 0.0
+            day_drawdown_pct = 0.0
             trades_today = 0
 
-        gate_reason = gate_signal(signal)
-        if gate_reason:
-            log_rejection(signal, gate_reason)
+        gate_label = gate_signal(signal)
+        if gate_label:
+            log_rejection(signal, "gate_fail", gate_label)
             continue
 
-        daily_drawdown_pct = (
-            (daily_start_equity - daily_low_equity) / daily_start_equity
-            if daily_start_equity
-            else 0.0
-        )
-        overall_drawdown_pct = (
-            (equity_high - equity_current) / equity_high
-            if equity_high
-            else 0.0
-        )
+        day_drawdown_pct = ((day_start_equity - equity_current) / day_start_equity) if day_start_equity else 0.0
+        overall_drawdown_pct = ((equity_high - equity_current) / equity_high) if equity_high else 0.0
         can_open, reason = can_open_trade(
             {
                 "trades_today_count": trades_today,
                 "consecutive_losses": loss_streak,
-                "daily_drawdown_pct": daily_drawdown_pct,
+                "daily_drawdown_pct": day_drawdown_pct,
                 "overall_drawdown_pct": overall_drawdown_pct,
             },
             risk_limits,
@@ -554,16 +571,32 @@ def run_paper_execute(
         if direction not in {"buy", "sell"}:
             log_rejection(signal, "invalid_payload")
             continue
+
         sl_price = compute_sl_price(signal.entry_price, direction, settings["st_pct"])
         signal_rr = getattr(signal, "rr", None)
-        rr_value = (
-            float(signal_rr)
-            if isinstance(signal_rr, (int, float)) and signal_rr > 0
-            else settings["rr"]
-        )
+        rr_value = float(signal_rr) if isinstance(signal_rr, (int, float)) and signal_rr > 0 else settings["rr"]
         tp_price = compute_tp_price(signal.entry_price, sl_price, direction, rr_value)
-        risk_cash = equity_current * settings["risk_per_trade_pct"]
-        size = compute_position_size(equity_current, settings["risk_per_trade_pct"], signal.entry_price, sl_price)
+
+        if settings["risk_mode"] == "daily_budget":
+            daily_budget_cash = day_start_equity * settings["daily_risk_budget_pct"]
+            remaining_slots = max(1, risk_limits.max_trades_per_day - trades_today)
+            risk_cash = daily_budget_cash / remaining_slots
+            risk_pct = risk_cash / equity_current if equity_current else 0.0
+            risk_pct = max(settings["min_risk_per_trade_pct"], min(settings["max_risk_per_trade_pct"], risk_pct))
+            risk_cash = equity_current * risk_pct
+            log_line(
+                f"[paper] risk_mode=daily_budget risk_pct_used={risk_pct:.6f} remaining_slots={remaining_slots} daily_budget_cash={daily_budget_cash:.2f}",
+                stream_log_path,
+            )
+        else:
+            risk_pct = settings["risk_per_trade_pct"]
+            risk_cash = equity_current * risk_pct
+
+        size = calc_position_size(signal.entry_price, sl_price, risk_pct, equity_current)
+        if size <= 0:
+            log_rejection(signal, "invalid_payload")
+            continue
+
         trade = PaperTrade(
             trade_id=f"paper-{idx:06d}",
             symbol=signal_internal,
@@ -581,12 +614,18 @@ def run_paper_execute(
             internal_symbol=signal_internal,
         )
         trades_opened += 1
+        log_line(
+            f"[paper] OPEN id={trade.trade_id} t={trade.entry_time} sym={trade.symbol} dir={trade.direction} entry={trade.entry_price:.5f} sl={trade.sl_price:.5f} tp={trade.tp_price:.5f}",
+            stream_log_path,
+        )
+
         candles_after = _candles_after_entry(signal.entry_time, candles, candle_index)
         exit_result = determine_exit(trade, candles_after, tie_breaker=settings["tie_breaker"])
         if exit_result is None:
             trade.status = TradeStatus.REJECTED
             trade.close_reason = CloseReason.INVALID.value
             log_trade(trade)
+            log_rejection(signal, "invalid_payload")
             continue
 
         trade.exit_time = exit_result.exit_time
@@ -599,9 +638,9 @@ def run_paper_execute(
         trade.pnl_cash = trade.pnl_r * risk_cash if trade.pnl_r is not None else 0.0
 
         equity_current += trade.pnl_cash or 0.0
-        daily_realized_pnl += trade.pnl_cash or 0.0
+        day_realized_pnl += trade.pnl_cash or 0.0
         trades_today += 1
-        daily_low_equity = min(daily_low_equity, equity_current)
+        day_drawdown_pct = ((day_start_equity - equity_current) / day_start_equity) if day_start_equity else 0.0
 
         if trade.pnl_cash is not None and trade.pnl_cash < 0:
             loss_streak += 1
@@ -609,14 +648,17 @@ def run_paper_execute(
             loss_streak = 0
         loss_streak_max = max(loss_streak_max, loss_streak)
         equity_high = max(equity_high, equity_current)
-        drawdown_pct = (
-            (equity_high - equity_current) / equity_high if equity_high else 0.0
-        )
+        drawdown_pct = ((equity_high - equity_current) / equity_high) if equity_high else 0.0
         max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
 
         trades_closed += 1
         trades.append(trade)
         log_trade(trade)
+        log_line(
+            f"[paper] CLOSE id={trade.trade_id} t={trade.exit_time} reason={trade.close_reason} pnl_r={trade.pnl_r:.4f} pnl_cash={trade.pnl_cash:.2f} equity={equity_current:.2f}",
+            stream_log_path,
+        )
+        _write_state(trade.exit_time or signal.entry_time)
 
     if current_day is not None:
         finalize_day(current_day)
@@ -630,11 +672,8 @@ def run_paper_execute(
                 f"{ledger.daily_realized_pnl:.2f}\n"
             )
 
-    total_return_pct = (
-        ((equity_current - settings["initial_equity"]) / settings["initial_equity"]) * 100
-        if settings["initial_equity"]
-        else 0.0
-    )
+    total_return_pct = (((equity_current - settings["initial_equity"]) / settings["initial_equity"]) * 100) if settings["initial_equity"] else 0.0
+    _write_state(current_day or datetime.utcnow().isoformat())
 
     return {
         "trades_received": trades_received,
