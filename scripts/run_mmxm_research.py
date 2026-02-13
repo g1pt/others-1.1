@@ -1203,6 +1203,7 @@ def _run_instrument_step4c(
     max_dd_pct: float,
     max_trades_per_day: int,
     paper_execute: bool,
+    enable_step2_paper: bool,
     step2_overrides: dict | None = None,
 ) -> None:
     instrument = _instrument_from_path(path)
@@ -1242,14 +1243,15 @@ def _run_instrument_step4c(
         },
         _timeframe_label_from_path(path),
     )
-    _run_step2_paper_execute(
-        step4d_trades,
-        candles,
-        instrument,
-        _timeframe_label_from_path(path),
-        initial_equity,
-        step2_overrides,
-    )
+    if enable_step2_paper:
+        _run_step2_paper_execute(
+            step4d_trades,
+            candles,
+            instrument,
+            _timeframe_label_from_path(path),
+            initial_equity,
+            step2_overrides,
+        )
     if paper_execute:
         _run_paper_execution(
             step4d_trades,
@@ -1348,6 +1350,11 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override STEP2 paper-execute hard drawdown stop pct.",
     )
+    parser.add_argument(
+        "--live-mode",
+        action="store_true",
+        help="Disable all paper execution flows (STEP2 + --paper-execute) for live runs.",
+    )
     return parser.parse_args()
 
 
@@ -1427,6 +1434,9 @@ def main() -> None:
         }.items()
         if value is not None
     }
+    enable_step2_paper = not args.live_mode
+    if args.live_mode and args.paper_execute:
+        print("Live mode active: ignoring --paper-execute to avoid paper/log side-effects.")
 
     for path in files:
         if args.baseline:
@@ -1441,7 +1451,8 @@ def main() -> None:
                 args.risk,
                 args.max_dd,
                 args.max_trades_day,
-                args.paper_execute,
+                args.paper_execute and not args.live_mode,
+                enable_step2_paper,
                 step2_overrides,
             )
 

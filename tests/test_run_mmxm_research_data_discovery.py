@@ -61,9 +61,10 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(mod, "_data_roots", lambda: [data_dir])
 
-    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, step2_overrides):
+    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides):
         captured["path"] = path
         captured["paper_execute"] = paper_execute
+        captured["enable_step2_paper"] = enable_step2_paper
         captured["step2_overrides"] = step2_overrides
 
     monkeypatch.setattr(mod, "_run_instrument_step4c", _fake_run)
@@ -89,6 +90,7 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
             paper_stop_after_losses=1,
             paper_daily_dd=0.03,
             paper_hard_dd=0.05,
+            live_mode=False,
         ),
     )
 
@@ -96,6 +98,7 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
 
     assert captured["path"] == default
     assert captured["paper_execute"] is True
+    assert captured["enable_step2_paper"] is True
     assert captured["step2_overrides"] == {
         "risk_per_trade_pct": 0.03,
         "max_trades_per_day": 2,
@@ -103,3 +106,50 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
         "daily_drawdown_stop_pct": 0.03,
         "hard_max_drawdown_pct": 0.05,
     }
+
+
+def test_live_mode_disables_paper_flows(monkeypatch, tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    default = data_dir / "FX_SPX500, 30.csv"
+    default.write_text("timestamp,open,high,low,close\n", encoding="utf-8")
+
+    captured: dict = {}
+
+    monkeypatch.setattr(mod, "_data_roots", lambda: [data_dir])
+
+    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides):
+        captured["paper_execute"] = paper_execute
+        captured["enable_step2_paper"] = enable_step2_paper
+
+    monkeypatch.setattr(mod, "_run_instrument_step4c", _fake_run)
+
+    monkeypatch.setattr(
+        mod,
+        "_parse_args",
+        lambda: mod.argparse.Namespace(
+            combo_filter=None,
+            all_datasets=False,
+            symbol="FX_SPX500",
+            tfs=[30],
+            initial_equity=10000.0,
+            risk=0.02,
+            max_dd=0.03,
+            daily_loss=0.02,
+            max_trades_day=3,
+            baseline=False,
+            self_test=False,
+            paper_execute=True,
+            paper_risk_pct=None,
+            paper_max_trades_day=None,
+            paper_stop_after_losses=None,
+            paper_daily_dd=None,
+            paper_hard_dd=None,
+            live_mode=True,
+        ),
+    )
+
+    mod.main()
+
+    assert captured["paper_execute"] is False
+    assert captured["enable_step2_paper"] is False
