@@ -26,6 +26,8 @@ others-1.1/
 - `docs/smart_money_entry_types_questions.md` — Smart Money Entry Types research questions (NL).
 - `docs/codex_filtering_strategy.md` — Codex filter prompt for expectancy/trade-count screening (NL).
 - `docs/scalping_bot_roadmap.md` — roadmap voor snellere scalping-bot + testplan (NL).
+- `docs/stappenplan_volgen.md` — concreet stappenplan om setup, research en webhook-flow te volgen (NL).
+- `docs/stappenplan_uitvoering.md` — uitgevoerd runverslag van het stappenplan + eventuele blockers (NL).
 
 ## CLI
 - Run research: `python -m scripts.run_mmxm_research`
