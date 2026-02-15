@@ -57,13 +57,13 @@ OB_TRADABLE_FIELD = "ob_tradable"
 
 @dataclass(frozen=True)
 class Step2PaperConfig:
-    rr_default: float = 2.0
+    rr_default: float = 3.0
     st_pct: float = 0.002
     max_trades_per_day: int = 1
     stop_after_consecutive_losses: int = 2
     daily_drawdown_stop_pct: float = 0.02
     hard_max_drawdown_pct: float = 0.03
-    risk_per_trade_pct: float = 0.005
+    risk_per_trade_pct: float = 0.03
     risk_mode: str = "fixed_per_trade"
     daily_risk_budget_pct: float = 0.02
     min_risk_per_trade_pct: float = 0.003
@@ -100,10 +100,18 @@ class SimulationResult:
 
 
 def _data_roots() -> list[Path]:
-    roots = [Path("/data"), Path("data")]
+    roots = [
+        Path(os.getenv("MMXM_DATA_DIR", "")).expanduser() if os.getenv("MMXM_DATA_DIR") else None,
+        Path(os.getenv("DATA_DIR", "")).expanduser() if os.getenv("DATA_DIR") else None,
+        Path("/data"),
+        Path("DATA"),
+        Path("data"),
+    ]
     seen = set()
     result = []
     for root in roots:
+        if root is None:
+            continue
         resolved = root.resolve()
         if resolved in seen:
             continue
@@ -111,6 +119,29 @@ def _data_roots() -> list[Path]:
             result.append(resolved)
             seen.add(resolved)
     return result
+
+
+def _data_setup_message() -> str:
+    searched = [
+        os.getenv("MMXM_DATA_DIR", "<unset>"),
+        os.getenv("DATA_DIR", "<unset>"),
+        str(Path("/data")),
+        str(Path("DATA").resolve()),
+        str(Path("data").resolve()),
+    ]
+    return (
+        "No CSV/XLSX files found.\n"
+        "Searched roots:\n"
+        f"- MMXM_DATA_DIR={searched[0]}\n"
+        f"- DATA_DIR={searched[1]}\n"
+        f"- {searched[2]}\n"
+        f"- {searched[3]}\n"
+        f"- {searched[4]}\n\n"
+        "Quick setup:\n"
+        "1) Put your candle files in ./DATA (recommended), e.g. 'FX_SPX500, 1.csv'.\n"
+        "2) Re-run: python -m scripts.run_mmxm_research --all-datasets --live-mode\n"
+        "3) Optional custom path: set MMXM_DATA_DIR to your dataset folder."
+    )
 
 
 def _dataset_names(symbol: str, tfs: list[int]) -> set[str]:
@@ -715,6 +746,140 @@ def _simulate_rr_trade(
     )
 
 
+def _simulate_outlier_trade_tp2_tp3(
+    trade,
+    candles: list[Candle],
+    candle_index: dict[str, int],
+    sl_pct: float,
+    tp1_r: float = 2.0,
+    tp2_r: float = 3.0,
+    tp3_r: float = 5.0,
+) -> Trade | None:
+    """Simuleer een outlier exit-plan: TP1/TP2/TP3 + trailing stop.
+
+    Positie-opbouw:
+    - 50% sluiten op TP1 (2R), rest naar break-even (0R stop).
+    - 30% sluiten op TP2 (3R), laatste 20% trailt met stop op 2R.
+    - 20% sluiten op TP3 (5R) of op trailing stop.
+    """
+    entry_idx = candle_index.get(trade.entry_time)
+    if entry_idx is None:
+        return None
+
+    stop_distance = trade.entry_price * sl_pct
+    if stop_distance <= 0:
+        return None
+
+    if trade.direction == "bullish":
+        sl_price = trade.entry_price - stop_distance
+        tp1_price = trade.entry_price + (tp1_r * stop_distance)
+        tp2_price = trade.entry_price + (tp2_r * stop_distance)
+        tp3_price = trade.entry_price + (tp3_r * stop_distance)
+    else:
+        sl_price = trade.entry_price + stop_distance
+        tp1_price = trade.entry_price - (tp1_r * stop_distance)
+        tp2_price = trade.entry_price - (tp2_r * stop_distance)
+        tp3_price = trade.entry_price - (tp3_r * stop_distance)
+
+    # 0 = full, 1 = TP1 hit, 2 = TP2 hit
+    stage = 0
+    stop_stage1 = trade.entry_price  # break-even na TP1
+    stop_stage2 = (
+        trade.entry_price + (2.0 * stop_distance)
+        if trade.direction == "bullish"
+        else trade.entry_price - (2.0 * stop_distance)
+    )
+    pnl_r = 0.0
+    exit_time = None
+    exit_price = None
+
+    start_idx = min(entry_idx + 1, len(candles))
+    for candle in candles[start_idx:]:
+        if trade.direction == "bullish":
+            if stage == 0:
+                if candle.low <= sl_price:
+                    pnl_r = -1.0
+                    exit_time = candle.timestamp
+                    exit_price = sl_price
+                    break
+                if candle.high >= tp1_price:
+                    pnl_r += 0.5 * tp1_r
+                    stage = 1
+
+            if stage == 1:
+                if candle.low <= stop_stage1:
+                    exit_time = candle.timestamp
+                    exit_price = stop_stage1
+                    break
+                if candle.high >= tp2_price:
+                    pnl_r += 0.3 * tp2_r
+                    stage = 2
+
+            if stage == 2:
+                if candle.low <= stop_stage2:
+                    pnl_r += 0.2 * 2.0
+                    exit_time = candle.timestamp
+                    exit_price = stop_stage2
+                    break
+                if candle.high >= tp3_price:
+                    pnl_r += 0.2 * tp3_r
+                    exit_time = candle.timestamp
+                    exit_price = tp3_price
+                    break
+        else:
+            if stage == 0:
+                if candle.high >= sl_price:
+                    pnl_r = -1.0
+                    exit_time = candle.timestamp
+                    exit_price = sl_price
+                    break
+                if candle.low <= tp1_price:
+                    pnl_r += 0.5 * tp1_r
+                    stage = 1
+
+            if stage == 1:
+                if candle.high >= stop_stage1:
+                    exit_time = candle.timestamp
+                    exit_price = stop_stage1
+                    break
+                if candle.low <= tp2_price:
+                    pnl_r += 0.3 * tp2_r
+                    stage = 2
+
+            if stage == 2:
+                if candle.high >= stop_stage2:
+                    pnl_r += 0.2 * 2.0
+                    exit_time = candle.timestamp
+                    exit_price = stop_stage2
+                    break
+                if candle.low <= tp3_price:
+                    pnl_r += 0.2 * tp3_r
+                    exit_time = candle.timestamp
+                    exit_price = tp3_price
+                    break
+
+    if exit_time is None:
+        if not candles:
+            return None
+        last_candle = candles[-1]
+        exit_time = last_candle.timestamp
+        exit_price = last_candle.close
+        remaining_weight = 1.0 if stage == 0 else (0.5 if stage == 1 else 0.2)
+        if trade.direction == "bullish":
+            remaining_r = (exit_price - trade.entry_price) / stop_distance
+        else:
+            remaining_r = (trade.entry_price - exit_price) / stop_distance
+        pnl_r += remaining_weight * remaining_r
+
+    return replace(
+        trade,
+        stop_price=sl_price,
+        exit_time=exit_time,
+        exit_price=exit_price,
+        pnl_r=pnl_r,
+    )
+
+
 def _compute_rr_metrics(
     trades: list[Trade],
     initial_equity: float,
@@ -832,6 +997,27 @@ def run_rr_sweep(
     rr_results: list[dict] = []
     rr_splits: dict[float, list[dict]] = {}
 
+    outlier_trades = []
+    for trade in existing_trades:
+        updated = _simulate_outlier_trade_tp2_tp3(
+            trade,
+            candles,
+            candle_index,
+            sl_pct=sl_pct,
+        )
+        if updated is None or updated.pnl_r is None:
+            continue
+        outlier_trades.append(updated)
+
+    outlier_metrics = _compute_rr_metrics(
+        outlier_trades,
+        initial_equity=initial_equity,
+        risk_per_trade=risk_per_trade,
+    )
+    outlier_metrics["rr"] = 0.0
+    outlier_metrics["label"] = "adaptive_tp2_tp3_trailing"
+    rr_results.append(outlier_metrics)
+
     for rr in rr_list:
         sweep_trades = []
         for trade in existing_trades:
@@ -852,6 +1038,7 @@ def run_rr_sweep(
             risk_per_trade=risk_per_trade,
         )
         metrics["rr"] = rr
+        metrics["label"] = f"fixed_rr_{rr:.1f}"
         rr_results.append(metrics)
 
         split_metrics = []
@@ -871,6 +1058,7 @@ def run_rr_sweep(
 
     print(f"\n=== RR SWEEP ({symbol} {tf_label}) ===")
     _format_rr_table(rr_results)
+    print("\nAdaptive mode label: adaptive_tp2_tp3_trailing (50%@2R, 30%@3R, 20%@5R with trailing stop).")
 
     print("\n--- RR Sweep Robustness (early/mid/late) ---")
     slice_labels = ["early", "mid", "late"]
@@ -1418,7 +1606,7 @@ def main() -> None:
     _validate_risk_pct(args.risk)
     files, used_fallback = _resolve_data_files(args.all_datasets, args.symbol, args.tfs)
     if not files:
-        raise SystemExit("No CSV/XLSX files found in /data or ./data")
+        raise SystemExit(_data_setup_message())
     if used_fallback:
         print("No default symbol/timeframe match found; falling back to all datasets in data roots.")
 

@@ -153,3 +153,34 @@ def test_live_mode_disables_paper_flows(monkeypatch, tmp_path) -> None:
 
     assert captured["paper_execute"] is False
     assert captured["enable_step2_paper"] is False
+
+
+def test_data_roots_prefers_env_and_includes_data_variants(monkeypatch, tmp_path) -> None:
+    custom = tmp_path / "custom_feed"
+    custom.mkdir()
+    data_upper = tmp_path / "DATA"
+    data_upper.mkdir()
+    data_lower = tmp_path / "data"
+    data_lower.mkdir()
+
+    monkeypatch.setenv("MMXM_DATA_DIR", str(custom))
+    monkeypatch.setenv("DATA_DIR", str(data_upper))
+    monkeypatch.chdir(tmp_path)
+
+    roots = mod._data_roots()
+
+    assert custom.resolve() in roots
+    assert data_upper.resolve() in roots
+    assert data_lower.resolve() in roots
+
+
+def test_data_setup_message_contains_next_steps(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MMXM_DATA_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+
+    msg = mod._data_setup_message()
+
+    assert "Quick setup:" in msg
+    assert "Put your candle files in ./DATA" in msg
+    assert "MMXM_DATA_DIR" in msg
