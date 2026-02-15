@@ -54,6 +54,17 @@ ENTRY_TYPE_FIELD = "entry_method"
 PHASE_FIELD = "mmxm_phase"
 OB_TRADABLE_FIELD = "ob_tradable"
 
+FX_SYMBOLS = {"EURUSD", "GBPUSD", "ICMARK", "OANDA_GBPUSD", "ICMARKETS_EURUSD"}
+INDEX_SYMBOLS = {"SP500", "SPX500", "FX_SPX500"}
+
+BE_TRIGGER_FX = 0.0010
+BE_LOCK_TRIGGER_FX = 0.0015
+BE_LOCK_OFFSET_FX = 0.0005
+
+BE_TRIGGER_INDEX = 10.0
+BE_LOCK_TRIGGER_INDEX = 15.0
+BE_LOCK_OFFSET_INDEX = 5.0
+
 
 @dataclass(frozen=True)
 class Step2PaperConfig:
@@ -674,6 +685,7 @@ def _simulate_rr_trade(
     candle_index: dict[str, int],
     sl_pct: float,
     rr: float,
+    symbol: str,
 ) -> Trade | None:
     entry_idx = candle_index.get(trade.entry_time)
     if entry_idx is None:
@@ -681,24 +693,54 @@ def _simulate_rr_trade(
     sl_price, tp_price = compute_sl_tp(
         trade.entry_price, trade.direction, sl_pct=sl_pct, rr=rr
     )
+    initial_stop_distance = abs(trade.entry_price - sl_price)
+    if initial_stop_distance <= 0:
+        return None
+
+    def _stop_policy() -> tuple[float, float, float]:
+        upper = symbol.upper()
+        if upper in INDEX_SYMBOLS:
+            return BE_TRIGGER_INDEX, BE_LOCK_TRIGGER_INDEX, BE_LOCK_OFFSET_INDEX
+        if upper in FX_SYMBOLS:
+            return BE_TRIGGER_FX, BE_LOCK_TRIGGER_FX, BE_LOCK_OFFSET_FX
+        return 0.0, 0.0, 0.0
+
+    be_trigger, lock_trigger, lock_offset = _stop_policy()
+
+    def _apply_dynamic_stop(candle) -> float:
+        dynamic_sl = sl_price
+        if be_trigger <= 0:
+            return dynamic_sl
+        if trade.direction == "bullish":
+            if candle.high - trade.entry_price >= be_trigger:
+                dynamic_sl = max(dynamic_sl, trade.entry_price)
+            if lock_trigger > 0 and lock_offset > 0 and candle.high - trade.entry_price >= lock_trigger:
+                dynamic_sl = max(dynamic_sl, trade.entry_price + lock_offset)
+        else:
+            if trade.entry_price - candle.low >= be_trigger:
+                dynamic_sl = min(dynamic_sl, trade.entry_price)
+            if lock_trigger > 0 and lock_offset > 0 and trade.entry_price - candle.low >= lock_trigger:
+                dynamic_sl = min(dynamic_sl, trade.entry_price - lock_offset)
+        return dynamic_sl
     exit_time = None
     exit_price = None
     pnl_r = None
 
     start_idx = min(entry_idx + 1, len(candles))
     for candle in candles[start_idx:]:
+        active_sl = _apply_dynamic_stop(candle)
         if trade.direction == "bullish":
-            hit_sl = candle.low <= sl_price
+            hit_sl = candle.low <= active_sl
             hit_tp = candle.high >= tp_price
             if hit_sl and hit_tp:
                 exit_time = candle.timestamp
-                exit_price = sl_price
-                pnl_r = -1.0
+                exit_price = active_sl
+                pnl_r = (exit_price - trade.entry_price) / initial_stop_distance
                 break
             if hit_sl:
                 exit_time = candle.timestamp
-                exit_price = sl_price
-                pnl_r = -1.0
+                exit_price = active_sl
+                pnl_r = (exit_price - trade.entry_price) / initial_stop_distance
                 break
             if hit_tp:
                 exit_time = candle.timestamp
@@ -706,17 +748,17 @@ def _simulate_rr_trade(
                 pnl_r = rr
                 break
         else:
-            hit_sl = candle.high >= sl_price
+            hit_sl = candle.high >= active_sl
             hit_tp = candle.low <= tp_price
             if hit_sl and hit_tp:
                 exit_time = candle.timestamp
-                exit_price = sl_price
-                pnl_r = -1.0
+                exit_price = active_sl
+                pnl_r = (trade.entry_price - exit_price) / initial_stop_distance
                 break
             if hit_sl:
                 exit_time = candle.timestamp
-                exit_price = sl_price
-                pnl_r = -1.0
+                exit_price = active_sl
+                pnl_r = (trade.entry_price - exit_price) / initial_stop_distance
                 break
             if hit_tp:
                 exit_time = candle.timestamp
@@ -1027,6 +1069,7 @@ def run_rr_sweep(
                 candle_index,
                 sl_pct=sl_pct,
                 rr=rr,
+                symbol=symbol,
             )
             if updated is None or updated.pnl_r is None:
                 continue

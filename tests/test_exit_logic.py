@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 
 from app.models import Candle, PaperOrder
@@ -52,7 +53,7 @@ def test_same_candle_tp_sl_prefers_sl_short():
     assert pnl_r == -1.0
 
 
-def test_break_even_moves_sl_for_sp500_after_6_points():
+def test_break_even_moves_sl_for_sp500_after_10_points():
     order = PaperOrder(
         id="2",
         symbol="SP500",
@@ -71,7 +72,7 @@ def test_break_even_moves_sl_for_sp500_after_6_points():
     candle = Candle(
         timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
         open=5000.0,
-        high=5006.0,
+        high=5010.0,
         low=4999.0,
         close=5001.0,
     )
@@ -110,3 +111,65 @@ def test_break_even_moves_sl_for_eurusd_after_10_pips():
     assert reason == "stop_loss"
     assert order.stop_loss == order.entry_price
     assert pnl_r == 0.0
+
+
+def test_lock_profit_moves_sl_for_eurusd_after_15_pips_to_plus_5_pips():
+    order = PaperOrder(
+        id="4",
+        symbol="EURUSD",
+        timeframe="30",
+        setup_id="EURUSD_4C_D",
+        direction="buy",
+        entry_price=1.1000,
+        stop_loss=1.0980,
+        take_profit=1.1040,
+        risk_pct=0.005,
+        risk_cash=50.0,
+        position_size=25000.0,
+        status="OPEN",
+        opened_utc="2024-01-01T00:00:00Z",
+    )
+    candle = Candle(
+        timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        open=1.1000,
+        high=1.1016,
+        low=1.1004,
+        close=1.1010,
+    )
+    hit, reason, pnl_r, exit_price = evaluate_candle_hit(order, candle)
+    assert hit is True
+    assert reason == "stop_loss"
+    assert order.stop_loss == 1.1005
+    assert exit_price == 1.1005
+    assert pnl_r == pytest.approx(0.25)
+
+
+def test_lock_profit_moves_sl_for_sp500_after_15_points_to_plus_5_points():
+    order = PaperOrder(
+        id="5",
+        symbol="SP500",
+        timeframe="30",
+        setup_id="MMXM_4C_D",
+        direction="buy",
+        entry_price=5000.0,
+        stop_loss=4990.0,
+        take_profit=5020.0,
+        risk_pct=0.005,
+        risk_cash=50.0,
+        position_size=5.0,
+        status="OPEN",
+        opened_utc="2024-01-01T00:00:00Z",
+    )
+    candle = Candle(
+        timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        open=5000.0,
+        high=5016.0,
+        low=5004.0,
+        close=5008.0,
+    )
+    hit, reason, pnl_r, exit_price = evaluate_candle_hit(order, candle)
+    assert hit is True
+    assert reason == "stop_loss"
+    assert order.stop_loss == 5005.0
+    assert exit_price == 5005.0
+    assert pnl_r == 0.5

@@ -60,3 +60,14 @@ DEFAULT_SL_PCT = _get_float("DEFAULT_SL_PCT", 0.002)
 
 BE_TRIGGER_EURUSD = _get_float("BE_TRIGGER_EURUSD", 0.0010)
 BE_TRIGGER_SP500 = _get_float("BE_TRIGGER_SP500", 6.0)
+
+# Two-stage protective stop policy.
+# FX defaults: +10 pips -> BE, +15 pips -> lock +5 pips.
+BE_TRIGGER_FX = _get_float("BE_TRIGGER_FX", 0.0010)
+BE_LOCK_TRIGGER_FX = _get_float("BE_LOCK_TRIGGER_FX", 0.0015)
+BE_LOCK_OFFSET_FX = _get_float("BE_LOCK_OFFSET_FX", 0.0005)
+
+# Index defaults (points): +10 -> BE, +15 -> lock +5.
+BE_TRIGGER_INDEX = _get_float("BE_TRIGGER_INDEX", 10.0)
+BE_LOCK_TRIGGER_INDEX = _get_float("BE_LOCK_TRIGGER_INDEX", 15.0)
+BE_LOCK_OFFSET_INDEX = _get_float("BE_LOCK_OFFSET_INDEX", 5.0)

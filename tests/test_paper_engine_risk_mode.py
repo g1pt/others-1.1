@@ -30,7 +30,15 @@ def _rulesets() -> dict[str, RulesetConfig]:
             phase="Manipulation",
             ob_tradability="Tradable",
             enabled=True,
-        )
+        ),
+        "EURUSD": RulesetConfig(
+            setup_id="EURUSD_4C_D",
+            timeframe="30",
+            entry_type="Refinement",
+            phase="Manipulation",
+            ob_tradability="Tradable",
+            enabled=True,
+        ),
     }
 
 
@@ -40,6 +48,20 @@ def _loader(symbol: str, timeframe: str) -> list[Candle]:
         Candle(timestamp="2024-01-01T09:00:00+00:00", open=100, high=100.1, low=99.9, close=100.0),
         Candle(timestamp="2024-01-01T09:30:00+00:00", open=100, high=100.1, low=99.9, close=100.0),
     ]
+
+
+def _payload_eurusd() -> dict[str, object]:
+    return {
+        "symbol": "EURUSD",
+        "timeframe": "30",
+        "setup": "EURUSD_4C_D",
+        "entry_type": "Refinement",
+        "phase": "Manipulation",
+        "ob_tradability": "Tradable",
+        "direction": "buy",
+        "price": 1.1000,
+        "timestamp": "2024-01-01T09:00:00+00:00",
+    }
 
 
 def _last_event(log_path):
@@ -79,6 +101,51 @@ def test_daily_budget_risk_cash_uses_equity_budget(tmp_path):
         daily_risk_budget_pct=0.02,
         min_risk_per_trade_pct=0.001,
         max_risk_per_trade_pct=0.02,
+        rulesets=_rulesets(),
+    )
+    engine = PaperEngine(config, ledger, data_loader=_loader)
+
+    ok, reason, trade_id = engine.process_signal(_payload())
+
+    assert ok is True
+    assert reason == "ok"
+    assert trade_id is not None
+
+    event = _last_event(ledger.events_log_path)
+    assert event["risk_cash"] == 100.0
+
+
+def test_symbol_specific_sl_uses_15_pips_for_fx(tmp_path):
+    ledger = Ledger.load_or_init(tmp_path / "logs", initial_equity=10_000.0)
+    config = PaperEngineConfig(
+        mode=ExecutionMode.PAPER_SIM,
+        risk_limits=RiskLimits(max_trades_per_day=2),
+        risk_per_trade_pct=0.005,
+        risk_mode="fixed_per_trade",
+        rulesets=_rulesets(),
+    )
+    engine = PaperEngine(config, ledger, data_loader=_loader)
+
+    ok, reason, trade_id = engine.process_signal(_payload_eurusd())
+
+    assert ok is True
+    assert reason == "ok"
+    assert trade_id is not None
+
+    event = _last_event(ledger.events_log_path)
+    assert event["sl_level"] == 1.0985
+
+
+def test_risk_cash_capped_by_remaining_hard_dd_buffer(tmp_path):
+    ledger = Ledger.load_or_init(tmp_path / "logs", initial_equity=10_000.0)
+    ledger.high_watermark = 10_000.0
+    ledger.current_equity = 9_800.0
+    ledger.daily_start_equity = 9_800.0
+    config = PaperEngineConfig(
+        mode=ExecutionMode.PAPER_SIM,
+        risk_limits=RiskLimits(max_trades_per_day=2, hard_max_drawdown_pct=0.03),
+        risk_per_trade_pct=0.02,
+        risk_mode="fixed_per_trade",
         rulesets=_rulesets(),
     )
     engine = PaperEngine(config, ledger, data_loader=_loader)
