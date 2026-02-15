@@ -14,6 +14,12 @@ from app.config import (
     RR_DEFAULT,
     BE_TRIGGER_EURUSD,
     BE_TRIGGER_SP500,
+    BE_TRIGGER_FX,
+    BE_LOCK_TRIGGER_FX,
+    BE_LOCK_OFFSET_FX,
+    BE_TRIGGER_INDEX,
+    BE_LOCK_TRIGGER_INDEX,
+    BE_LOCK_OFFSET_INDEX,
     SL_DISTANCE_MODE,
     SL_FIXED_PCT,
 )
@@ -154,21 +160,46 @@ def _be_trigger_distance(symbol: str, entry_price: float) -> float:
     return 0.0
 
 
+def _symbol_stop_policy(symbol: str) -> tuple[float, float, float]:
+    normalized = symbol.upper()
+    if normalized in {"EURUSD", "GBPUSD", "FX_EURUSD", "FX_GBPUSD"}:
+        return BE_TRIGGER_FX, BE_LOCK_TRIGGER_FX, BE_LOCK_OFFSET_FX
+    if normalized in {"SP500", "FX_SPX500", "SPX500"}:
+        return BE_TRIGGER_INDEX, BE_LOCK_TRIGGER_INDEX, BE_LOCK_OFFSET_INDEX
+    return 0.0, 0.0, 0.0
+
+
 def _apply_break_even(order: PaperOrder, candle: Candle) -> None:
     if order.status != "OPEN":
         return
-    trigger_distance = _be_trigger_distance(order.symbol, order.entry_price)
+    trigger_distance, lock_trigger, lock_offset = _symbol_stop_policy(order.symbol)
+    if trigger_distance <= 0:
+        trigger_distance = _be_trigger_distance(order.symbol, order.entry_price)
     if trigger_distance <= 0:
         return
 
     if order.direction == "buy":
         if candle.high - order.entry_price >= trigger_distance:
             order.stop_loss = max(order.stop_loss, order.entry_price)
+        if lock_trigger > 0 and lock_offset > 0 and candle.high - order.entry_price >= lock_trigger:
+            order.stop_loss = max(order.stop_loss, order.entry_price + lock_offset)
     else:
         if order.entry_price - candle.low >= trigger_distance:
             order.stop_loss = min(order.stop_loss, order.entry_price)
+        if lock_trigger > 0 and lock_offset > 0 and order.entry_price - candle.low >= lock_trigger:
+            order.stop_loss = min(order.stop_loss, order.entry_price - lock_offset)
+
+def _sl_exit_pnl_r(order: PaperOrder, exit_price: float) -> float:
+    initial_risk = abs(order.take_profit - order.entry_price) / RR_DEFAULT if RR_DEFAULT else 0.0
+    if initial_risk <= 0:
+        return 0.0 if exit_price == order.entry_price else -1.0
+    if order.direction == "buy":
+        return (exit_price - order.entry_price) / initial_risk
+    return (order.entry_price - exit_price) / initial_risk
+
 
 def evaluate_candle_hit(order: PaperOrder, candle: Candle) -> tuple[bool, str, float, float]:
+    prior_stop_loss = order.stop_loss
     _apply_break_even(order, candle)
 
     sl_hit = False
@@ -182,11 +213,17 @@ def evaluate_candle_hit(order: PaperOrder, candle: Candle) -> tuple[bool, str, f
 
     if sl_hit and tp_hit:
         exit_price = order.stop_loss
-        pnl_r = 0.0 if exit_price == order.entry_price else -1.0
+        if order.stop_loss != prior_stop_loss:
+            pnl_r = _sl_exit_pnl_r(order, exit_price)
+        else:
+            pnl_r = 0.0 if exit_price == order.entry_price else -1.0
         return True, "stop_loss", pnl_r, exit_price
     if sl_hit:
         exit_price = order.stop_loss
-        pnl_r = 0.0 if exit_price == order.entry_price else -1.0
+        if order.stop_loss != prior_stop_loss:
+            pnl_r = _sl_exit_pnl_r(order, exit_price)
+        else:
+            pnl_r = 0.0 if exit_price == order.entry_price else -1.0
         return True, "stop_loss", pnl_r, exit_price
     if tp_hit:
         pnl_r = RR_DEFAULT
