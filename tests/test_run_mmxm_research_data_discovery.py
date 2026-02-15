@@ -51,6 +51,40 @@ def test_resolve_data_files_without_fallback_when_default_match_exists(tmp_path,
     assert used_fallback is False
 
 
+def test_load_dataset_allowlist_normalizes_entries(tmp_path) -> None:
+    allowlist = tmp_path / "allowlist.json"
+    allowlist.write_text(
+        '["FX_SPX500, 2.csv", "FX_SPX500, 15 (1).csv", "  ", "ICMARKETS_EURUSD, 1.csv"]',
+        encoding="utf-8",
+    )
+
+    loaded = mod._load_dataset_allowlist(allowlist)
+
+    assert loaded == {
+        "fx_spx500, 2",
+        "fx_spx500, 15",
+        "icmarkets_eurusd, 1",
+    }
+
+
+def test_apply_dataset_allowlist_filters_files(tmp_path) -> None:
+    files = [
+        tmp_path / "FX_SPX500, 2.csv",
+        tmp_path / "FX_SPX500, 15 (1).csv",
+        tmp_path / "OANDA_GBPUSD, 5.csv",
+    ]
+
+    filtered = mod._apply_dataset_allowlist(
+        files,
+        {
+            "fx_spx500, 2",
+            "oanda_gbpusd, 5",
+        },
+    )
+
+    assert filtered == [files[0], files[2]]
+
+
 def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -75,6 +109,7 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
         lambda: mod.argparse.Namespace(
             combo_filter=None,
             all_datasets=False,
+            dataset_allowlist=None,
             symbol="FX_SPX500",
             tfs=[30],
             initial_equity=10000.0,
@@ -139,6 +174,7 @@ def test_live_mode_disables_paper_flows(monkeypatch, tmp_path) -> None:
         lambda: mod.argparse.Namespace(
             combo_filter=None,
             all_datasets=False,
+            dataset_allowlist=None,
             symbol="FX_SPX500",
             tfs=[30],
             initial_equity=10000.0,
@@ -191,6 +227,98 @@ def test_data_roots_prefers_env_and_includes_data_variants(monkeypatch, tmp_path
     assert data_upper.resolve() in roots
     assert data_lower.resolve() in roots
 
+
+
+
+
+def test_dataset_allowlist_can_come_from_env(monkeypatch, tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    keep = data_dir / "FX_SPX500, 2.csv"
+    drop = data_dir / "OANDA_GBPUSD, 5.csv"
+    for pth in (keep, drop):
+        pth.write_text("timestamp,open,high,low,close\n", encoding="utf-8")
+
+    allowlist = tmp_path / "keep.json"
+    allowlist.write_text('["FX_SPX500, 2.csv"]', encoding="utf-8")
+
+    captured: dict = {}
+
+    monkeypatch.setattr(mod, "_data_roots", lambda: [data_dir])
+
+    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides, entry_quality, trade_management):
+        captured.setdefault("paths", []).append(path)
+
+    monkeypatch.setattr(mod, "_run_instrument_step4c", _fake_run)
+    monkeypatch.setenv("MMXM_DATASET_ALLOWLIST", str(allowlist))
+
+    monkeypatch.setattr(
+        mod,
+        "_parse_args",
+        lambda: mod.argparse.Namespace(
+            combo_filter=None,
+            all_datasets=True,
+            dataset_allowlist=None,
+            symbol="FX_SPX500",
+            tfs=[30],
+            initial_equity=10000.0,
+            risk=0.02,
+            max_dd=0.03,
+            daily_loss=0.02,
+            max_trades_day=3,
+            baseline=False,
+            self_test=False,
+            paper_execute=False,
+            paper_risk_pct=None,
+            paper_max_trades_day=None,
+            paper_stop_after_losses=None,
+            paper_daily_dd=None,
+            paper_hard_dd=None,
+            live_mode=True,
+            disable_killzone_filter=False,
+            killzones="7-11,13-16",
+            min_impulse_pct=0.0004,
+            min_ob_range_pct=0.0003,
+            time_stop_candles=24,
+            partial_tp_r=1.0,
+            partial_close_fraction=0.5,
+            vol_lookback=20,
+            vol_sl_multiplier=1.2,
+        ),
+    )
+
+    mod.main()
+
+    assert captured["paths"] == [keep]
+def test_parse_args_accepts_dataset_allowlist_aliases(monkeypatch, tmp_path) -> None:
+    allowlist = tmp_path / "keep_datasets.json"
+    allowlist.write_text('["FX_SPX500, 2.csv"]', encoding="utf-8")
+
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "run_mmxm_research.py",
+            "--dataset_allowlist",
+            str(allowlist),
+        ],
+    )
+    args = mod._parse_args()
+
+    assert args.dataset_allowlist == allowlist
+
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "run_mmxm_research.py",
+            "--dataset-allowlist",
+            str(allowlist),
+        ],
+    )
+    args = mod._parse_args()
+
+    assert args.dataset_allowlist == allowlist
 
 def test_data_setup_message_contains_next_steps(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)

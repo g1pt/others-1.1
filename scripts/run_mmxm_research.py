@@ -204,6 +204,32 @@ def _resolve_data_files(include_all: bool, symbol: str, tfs: list[int]) -> tuple
     fallback_files = _find_data_files(True, symbol, tfs)
     return fallback_files, bool(fallback_files)
 
+
+def _load_dataset_allowlist(path: Path) -> set[str]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"Failed to read dataset allowlist file '{path}': {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in dataset allowlist file '{path}': {exc}") from exc
+
+    if not isinstance(raw, list):
+        raise ValueError("Dataset allowlist JSON must be an array of dataset names.")
+
+    normalized: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError("Dataset allowlist entries must be strings.")
+        value = item.strip()
+        if not value:
+            continue
+        normalized.add(_canonical_dataset_key(Path(value)))
+    return normalized
+
+
+def _apply_dataset_allowlist(files: list[Path], allowed: set[str]) -> list[Path]:
+    return [path for path in files if _canonical_dataset_key(path) in allowed]
+
 def _instrument_from_path(path: Path) -> str:
     match = re.search(r"([A-Z]{6})", path.stem.upper())
     if match:
@@ -1630,6 +1656,17 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run research on all CSV/XLSX files instead of the default SPX500 15/30 set.",
     )
+    parser.add_argument(
+        "--dataset-allowlist",
+        "--dataset_allowlist",
+        dest="dataset_allowlist",
+        type=Path,
+        help=(
+            "Path to a JSON array with allowed dataset names (e.g. "
+            '["FX_SPX500, 2.csv", "FX_SPX500, 15 (1).csv"]).'
+            " If omitted, MMXM_DATASET_ALLOWLIST env var is used when set."
+        ),
+    )
     parser.add_argument("--symbol", default=DEFAULT_SYMBOL, help="Instrument symbol.")
     parser.add_argument(
         "--tfs",
@@ -1822,6 +1859,14 @@ def main() -> None:
 
     _validate_risk_pct(args.risk)
     files, used_fallback = _resolve_data_files(args.all_datasets, args.symbol, args.tfs)
+    allowlist_path = args.dataset_allowlist
+    if allowlist_path is None:
+        env_allowlist = os.getenv("MMXM_DATASET_ALLOWLIST", "").strip()
+        if env_allowlist:
+            allowlist_path = Path(env_allowlist)
+    if allowlist_path:
+        allowlist = _load_dataset_allowlist(allowlist_path)
+        files = _apply_dataset_allowlist(files, allowlist)
     if not files:
         raise SystemExit(_data_setup_message())
     if used_fallback:
