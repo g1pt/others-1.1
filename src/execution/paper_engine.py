@@ -12,8 +12,15 @@ from src.models import Candle
 from .config import ExecutionMode, PaperEngineConfig
 from .ledger import Ledger
 from .models import PaperTrade, SignalEvent, TradeStatus
-from .risk import RiskLimits, can_open_trade, compute_qty, compute_sl
+from .risk import RiskLimits, can_open_trade, compute_sl
 from .tp_routing import compute_tp
+
+
+FX_SYMBOLS = {"EURUSD", "GBPUSD", "ICMARK", "ICMARKETS_EURUSD", "OANDA_GBPUSD"}
+INDEX_SYMBOLS = {"SP500", "SPX500", "FX_SPX500"}
+
+FX_STOP_DISTANCE = 0.0015
+INDEX_STOP_DISTANCE = 15.0
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -66,6 +73,31 @@ class PaperEngine:
 
     def _normalize_symbol(self, symbol: str) -> str:
         return self.config.symbol_map.get(symbol, symbol)
+
+    def _symbol_stop_distance(self, symbol: str) -> float | None:
+        normalized = symbol.upper()
+        if normalized in FX_SYMBOLS:
+            return FX_STOP_DISTANCE
+        if normalized in INDEX_SYMBOLS:
+            return INDEX_STOP_DISTANCE
+        return None
+
+    def _compute_symbol_sl(self, entry_price: float, direction: str, symbol: str) -> float:
+        distance = self._symbol_stop_distance(symbol)
+        if distance is None:
+            return compute_sl(entry_price, direction, self.config.sl_pct)
+        if direction == "buy":
+            return entry_price - distance
+        return entry_price + distance
+
+    def _effective_risk_cash(self, requested_risk_pct: float) -> float:
+        base_risk_cash = self.ledger.current_equity * requested_risk_pct
+        hard_cap = self.config.risk_limits.hard_max_drawdown_pct
+        if hard_cap <= 0:
+            return base_risk_cash
+        floor_equity = self.ledger.high_watermark * (1 - hard_cap)
+        remaining_buffer = self.ledger.current_equity - floor_equity
+        return max(0.0, min(base_risk_cash, remaining_buffer))
 
     def _parse_event(self, payload: Mapping[str, Any]) -> tuple[SignalEvent | None, str | None]:
         try:
@@ -237,7 +269,7 @@ class PaperEngine:
             self._log_rejection(payload, reason or "risk_blocked")
             return False, reason or "risk_blocked", None
 
-        sl = compute_sl(event.entry_price, event.direction, self.config.sl_pct)
+        sl = self._compute_symbol_sl(event.entry_price, event.direction, event.symbol)
         tp_level, tp_label = compute_tp(
             event.entry_price,
             sl,
@@ -257,17 +289,13 @@ class PaperEngine:
                 max(self.config.min_risk_per_trade_pct, base_daily_share),
             )
 
-        qty = compute_qty(
-            self.ledger.current_equity,
-            risk_pct,
-            event.entry_price,
-            sl,
-        )
+        risk_cash = self._effective_risk_cash(risk_pct)
+        stop_distance = abs(event.entry_price - sl)
+        qty = (risk_cash / stop_distance) if stop_distance > 0 else 0.0
         if qty <= 0:
             self._log_rejection(payload, "invalid_payload")
             return False, "invalid_payload", None
 
-        risk_cash = self.ledger.current_equity * risk_pct
         trade = PaperTrade(
             trade_id=str(uuid.uuid4()),
             symbol=event.symbol,
