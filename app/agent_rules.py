@@ -1,6 +1,6 @@
 SYMBOL_RULESETS = {
     "SP500": {
-        "allowed_timeframes": {"30"},
+        "allowed_timeframes": {"2", "3"},
         "setup_id": "MMXM_4C_D",
         "entry_type": "Refinement",
         "phase": "Manipulation",

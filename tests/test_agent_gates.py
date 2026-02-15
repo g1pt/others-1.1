@@ -6,7 +6,7 @@ def _payload(**kwargs):
     data = {
         "secret": "secret",
         "symbol": "SP500",
-        "timeframe": "30",
+        "timeframe": "2",
         "timestamp": "2024-01-01T00:00:00Z",
         "setup": "MMXM_4C_D",
         "entry_type": "Refinement",
@@ -33,6 +33,14 @@ def test_validate_signal_rejects_setup():
     ok, reason = validate_signal(payload, "SP500", timeframe)
     assert ok is False
     assert reason == "setup_not_allowed"
+
+
+def test_validate_signal_rejects_timeframe_outside_allowlist():
+    payload = _payload(timeframe="30")
+    timeframe = normalize_timeframe(payload.timeframe)
+    ok, reason = validate_signal(payload, "SP500", timeframe)
+    assert ok is False
+    assert reason == "timeframe_not_allowed"
 
 
 def test_normalize_direction():
