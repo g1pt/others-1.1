@@ -110,6 +110,23 @@ class SimulationResult:
     missing_pnl_trades: int
 
 
+@dataclass(frozen=True)
+class EntryQualityConfig:
+    enable_killzone_filter: bool = True
+    killzones_utc: tuple[tuple[int, int], ...] = ((7, 11), (13, 16))
+    min_impulse_pct: float = 0.0004
+    min_ob_range_pct: float = 0.0003
+
+
+@dataclass(frozen=True)
+class TradeManagementConfig:
+    time_stop_candles: int = 24
+    partial_tp_r: float = 1.0
+    partial_close_fraction: float = 0.5
+    vol_lookback: int = 20
+    vol_sl_multiplier: float = 1.2
+
+
 def _data_roots() -> list[Path]:
     roots = [
         Path(os.getenv("MMXM_DATA_DIR", "")).expanduser() if os.getenv("MMXM_DATA_DIR") else None,
@@ -679,6 +696,86 @@ def compute_sl_tp(
     return sl_price, tp_price
 
 
+def _parse_iso_hour(ts: str) -> int | None:
+    cleaned = str(ts).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(cleaned).hour
+    except ValueError:
+        return None
+
+
+def _is_in_killzone(ts: str, killzones: tuple[tuple[int, int], ...]) -> bool:
+    hour = _parse_iso_hour(ts)
+    if hour is None:
+        return False
+    for start, end in killzones:
+        if start <= hour < end:
+            return True
+    return False
+
+
+def _median_true_range(candles: list[Candle], end_idx: int, lookback: int) -> float:
+    start_idx = max(1, end_idx - lookback + 1)
+    trs: list[float] = []
+    for i in range(start_idx, end_idx + 1):
+        curr = candles[i]
+        prev = candles[i - 1]
+        tr = max(
+            curr.high - curr.low,
+            abs(curr.high - prev.close),
+            abs(curr.low - prev.close),
+        )
+        trs.append(float(tr))
+    return statistics.median(trs) if trs else 0.0
+
+
+def _entry_quality_ok(trade, candles: list[Candle], candle_index: dict[str, int], config: EntryQualityConfig) -> bool:
+    if config.enable_killzone_filter and not _is_in_killzone(trade.entry_time, config.killzones_utc):
+        return False
+    idx = candle_index.get(trade.entry_time)
+    if idx is None or idx <= 0:
+        return False
+    entry = float(trade.entry_price)
+    impulse_ref = candles[idx - 1]
+    impulse_range_pct = abs(float(impulse_ref.high) - float(impulse_ref.low)) / entry if entry else 0.0
+    if impulse_range_pct < config.min_impulse_pct:
+        return False
+    stop_price = getattr(trade, "stop_price", None)
+    if stop_price is None:
+        stop_price = impulse_ref.low if trade.direction == "bullish" else impulse_ref.high
+    ob_range_pct = abs(float(stop_price) - float(trade.entry_price)) / entry if entry else 0.0
+    if ob_range_pct < config.min_ob_range_pct:
+        return False
+    return True
+
+
+def _build_entry_quality_config(args: argparse.Namespace) -> EntryQualityConfig:
+    killzones: list[tuple[int, int]] = []
+    if args.killzones:
+        for part in args.killzones.split(','):
+            item = part.strip()
+            if not item:
+                continue
+            start_str, end_str = item.split('-', maxsplit=1)
+            killzones.append((int(start_str), int(end_str)))
+    return EntryQualityConfig(
+        enable_killzone_filter=not args.disable_killzone_filter,
+        killzones_utc=tuple(killzones) if killzones else EntryQualityConfig.killzones_utc,
+        min_impulse_pct=args.min_impulse_pct,
+        min_ob_range_pct=args.min_ob_range_pct,
+    )
+
+
+def _build_trade_management_config(args: argparse.Namespace) -> TradeManagementConfig:
+    return TradeManagementConfig(
+        time_stop_candles=args.time_stop_candles,
+        partial_tp_r=args.partial_tp_r,
+        partial_close_fraction=args.partial_close_fraction,
+        vol_lookback=args.vol_lookback,
+        vol_sl_multiplier=args.vol_sl_multiplier,
+    )
+
+
 def _simulate_rr_trade(
     trade,
     candles: list[Candle],
@@ -686,16 +783,27 @@ def _simulate_rr_trade(
     sl_pct: float,
     rr: float,
     symbol: str,
+    trade_management: TradeManagementConfig,
 ) -> Trade | None:
     entry_idx = candle_index.get(trade.entry_time)
     if entry_idx is None:
         return None
-    sl_price, tp_price = compute_sl_tp(
-        trade.entry_price, trade.direction, sl_pct=sl_pct, rr=rr
-    )
-    initial_stop_distance = abs(trade.entry_price - sl_price)
-    if initial_stop_distance <= 0:
+
+    entry_price = float(trade.entry_price)
+    base_stop_distance = entry_price * sl_pct
+    vol_stop_distance = _median_true_range(candles, entry_idx, trade_management.vol_lookback) * trade_management.vol_sl_multiplier
+    stop_distance = max(base_stop_distance, vol_stop_distance)
+    if stop_distance <= 0:
         return None
+
+    if trade.direction == "bullish":
+        sl_price = entry_price - stop_distance
+        tp_price = entry_price + (stop_distance * rr)
+    else:
+        sl_price = entry_price + stop_distance
+        tp_price = entry_price - (stop_distance * rr)
+
+    initial_stop_distance = stop_distance
 
     def _stop_policy() -> tuple[float, float, float]:
         upper = symbol.upper()
@@ -707,8 +815,8 @@ def _simulate_rr_trade(
 
     be_trigger, lock_trigger, lock_offset = _stop_policy()
 
-    def _apply_dynamic_stop(candle) -> float:
-        dynamic_sl = sl_price
+    def _apply_dynamic_stop(candle, current_sl: float) -> float:
+        dynamic_sl = current_sl
         if be_trigger <= 0:
             return dynamic_sl
         if trade.direction == "bullish":
@@ -722,70 +830,63 @@ def _simulate_rr_trade(
             if lock_trigger > 0 and lock_offset > 0 and trade.entry_price - candle.low >= lock_trigger:
                 dynamic_sl = min(dynamic_sl, trade.entry_price - lock_offset)
         return dynamic_sl
+
     exit_time = None
     exit_price = None
     pnl_r = None
+    active_sl = sl_price
+    partial_realized_r = 0.0
+    partial_taken = False
+    remaining_fraction = 1.0
 
     start_idx = min(entry_idx + 1, len(candles))
-    for candle in candles[start_idx:]:
-        active_sl = _apply_dynamic_stop(candle)
+    for step, candle in enumerate(candles[start_idx:], start=1):
+        active_sl = _apply_dynamic_stop(candle, active_sl)
+
+        if not partial_taken and trade_management.partial_close_fraction > 0:
+            partial_trigger = trade.entry_price + (initial_stop_distance * trade_management.partial_tp_r) if trade.direction == "bullish" else trade.entry_price - (initial_stop_distance * trade_management.partial_tp_r)
+            hit_partial = candle.high >= partial_trigger if trade.direction == "bullish" else candle.low <= partial_trigger
+            if hit_partial:
+                partial_taken = True
+                locked = trade_management.partial_close_fraction
+                partial_realized_r = locked * trade_management.partial_tp_r
+                remaining_fraction = max(0.0, 1.0 - locked)
+                active_sl = max(active_sl, trade.entry_price) if trade.direction == "bullish" else min(active_sl, trade.entry_price)
+
         if trade.direction == "bullish":
             hit_sl = candle.low <= active_sl
             hit_tp = candle.high >= tp_price
-            if hit_sl and hit_tp:
-                exit_time = candle.timestamp
-                exit_price = active_sl
-                pnl_r = (exit_price - trade.entry_price) / initial_stop_distance
-                break
-            if hit_sl:
-                exit_time = candle.timestamp
-                exit_price = active_sl
-                pnl_r = (exit_price - trade.entry_price) / initial_stop_distance
-                break
-            if hit_tp:
-                exit_time = candle.timestamp
-                exit_price = tp_price
-                pnl_r = rr
-                break
         else:
             hit_sl = candle.high >= active_sl
             hit_tp = candle.low <= tp_price
-            if hit_sl and hit_tp:
-                exit_time = candle.timestamp
-                exit_price = active_sl
-                pnl_r = (trade.entry_price - exit_price) / initial_stop_distance
-                break
-            if hit_sl:
-                exit_time = candle.timestamp
-                exit_price = active_sl
-                pnl_r = (trade.entry_price - exit_price) / initial_stop_distance
-                break
-            if hit_tp:
-                exit_time = candle.timestamp
-                exit_price = tp_price
-                pnl_r = rr
-                break
+
+        if hit_sl and hit_tp:
+            exit_time = candle.timestamp
+            exit_price = active_sl
+            base_r = (exit_price - trade.entry_price) / initial_stop_distance if trade.direction == "bullish" else (trade.entry_price - exit_price) / initial_stop_distance
+            pnl_r = partial_realized_r + remaining_fraction * base_r
+            break
+        if hit_sl:
+            exit_time = candle.timestamp
+            exit_price = active_sl
+            base_r = (exit_price - trade.entry_price) / initial_stop_distance if trade.direction == "bullish" else (trade.entry_price - exit_price) / initial_stop_distance
+            pnl_r = partial_realized_r + remaining_fraction * base_r
+            break
+        if hit_tp:
+            exit_time = candle.timestamp
+            exit_price = tp_price
+            pnl_r = partial_realized_r + remaining_fraction * rr
+            break
+        if trade_management.time_stop_candles > 0 and step >= trade_management.time_stop_candles:
+            exit_time = candle.timestamp
+            exit_price = candle.close
+            base_r = (exit_price - trade.entry_price) / initial_stop_distance if trade.direction == "bullish" else (trade.entry_price - exit_price) / initial_stop_distance
+            pnl_r = partial_realized_r + remaining_fraction * base_r
+            break
 
     if exit_time is None:
-        if not candles:
-            return None
-        last_candle = candles[-1]
-        exit_time = last_candle.timestamp
-        exit_price = last_candle.close
-        stop_distance = abs(trade.entry_price - sl_price)
-        if stop_distance > 0:
-            if trade.direction == "bullish":
-                pnl_r = (exit_price - trade.entry_price) / stop_distance
-            else:
-                pnl_r = (trade.entry_price - exit_price) / stop_distance
-
-    return replace(
-        trade,
-        stop_price=sl_price,
-        exit_time=exit_time,
-        exit_price=exit_price,
-        pnl_r=pnl_r,
-    )
+        return None
+    return replace(trade, stop_price=sl_price, exit_time=exit_time, exit_price=exit_price, pnl_r=pnl_r)
 
 
 def _simulate_outlier_trade_tp2_tp3(
@@ -823,9 +924,8 @@ def _simulate_outlier_trade_tp2_tp3(
         tp2_price = trade.entry_price - (tp2_r * stop_distance)
         tp3_price = trade.entry_price - (tp3_r * stop_distance)
 
-    # 0 = full, 1 = TP1 hit, 2 = TP2 hit
     stage = 0
-    stop_stage1 = trade.entry_price  # break-even na TP1
+    stop_stage1 = trade.entry_price
     stop_stage2 = (
         trade.entry_price + (2.0 * stop_distance)
         if trade.direction == "bullish"
@@ -1028,6 +1128,7 @@ def run_rr_sweep(
     rr_list: list[float],
     config: dict,
     tf_label: str,
+    trade_management: TradeManagementConfig,
 ) -> None:
     candles: list[Candle] = config["candles"]
     candle_index = {candle.timestamp: idx for idx, candle in enumerate(candles)}
@@ -1070,6 +1171,7 @@ def run_rr_sweep(
                 sl_pct=sl_pct,
                 rr=rr,
                 symbol=symbol,
+                trade_management=trade_management,
             )
             if updated is None or updated.pnl_r is None:
                 continue
@@ -1436,13 +1538,32 @@ def _run_instrument_step4c(
     paper_execute: bool,
     enable_step2_paper: bool,
     step2_overrides: dict | None = None,
+    entry_quality: EntryQualityConfig | None = None,
+    trade_management: TradeManagementConfig | None = None,
 ) -> None:
     instrument = _instrument_from_path(path)
     print(f"\n=== {instrument} ({path.name}) ===")
     candles = _load_candles(path)
     result = run_backtest(candles, combo_filter=combo_filter)
+    entry_quality = entry_quality or EntryQualityConfig()
+    trade_management = trade_management or TradeManagementConfig()
+    candle_index = {c.timestamp: idx for idx, c in enumerate(candles)}
+
+    quality_trades = [
+        trade
+        for trade in result.trades
+        if _entry_quality_ok(trade, candles, candle_index, entry_quality)
+    ]
+    print(
+        "entry_quality_filter="
+        f"{len(quality_trades)}/{len(result.trades)} kept "
+        f"(killzone={'on' if entry_quality.enable_killzone_filter else 'off'}, "
+        f"min_impulse_pct={entry_quality.min_impulse_pct}, "
+        f"min_ob_range_pct={entry_quality.min_ob_range_pct})"
+    )
+
     _run_step4c_matrix(
-        result.trades,
+        quality_trades,
         initial_equity,
         risk_pct,
         max_dd_pct,
@@ -1450,7 +1571,7 @@ def _run_instrument_step4c(
     )
     step4d_trades = [
         trade
-        for trade in result.trades
+        for trade in quality_trades
         if _normalize_entry_type(trade) == "Refinement Entry"
         and _normalize_tradability(trade) == "Tradable"
         and _normalize_phase(trade) == "Manipulation"
@@ -1473,6 +1594,7 @@ def _run_instrument_step4c(
             "sl_pct": 0.002,
         },
         _timeframe_label_from_path(path),
+        trade_management,
     )
     if enable_step2_paper:
         _run_step2_paper_execute(
@@ -1586,6 +1708,58 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable all paper execution flows (STEP2 + --paper-execute) for live runs.",
     )
+    parser.add_argument(
+        "--disable-killzone-filter",
+        action="store_true",
+        help="Disable UTC killzone gating in entry-quality filtering.",
+    )
+    parser.add_argument(
+        "--killzones",
+        default="7-11,13-16",
+        help="UTC killzones as comma-separated hour ranges, e.g. '7-11,13-16'.",
+    )
+    parser.add_argument(
+        "--min-impulse-pct",
+        type=float,
+        default=0.0004,
+        help="Minimum prior-candle impulse range as fraction of entry price.",
+    )
+    parser.add_argument(
+        "--min-ob-range-pct",
+        type=float,
+        default=0.0003,
+        help="Minimum OB proxy range as fraction of entry price.",
+    )
+    parser.add_argument(
+        "--time-stop-candles",
+        type=int,
+        default=24,
+        help="Maximum candles to hold a trade in RR simulation before TIME_STOP.",
+    )
+    parser.add_argument(
+        "--partial-tp-r",
+        type=float,
+        default=1.0,
+        help="R multiple to trigger partial take-profit.",
+    )
+    parser.add_argument(
+        "--partial-close-fraction",
+        type=float,
+        default=0.5,
+        help="Fraction to close at partial TP trigger (0.0-1.0).",
+    )
+    parser.add_argument(
+        "--vol-lookback",
+        type=int,
+        default=20,
+        help="Lookback candles for volatility-aware SL floor (median true range).",
+    )
+    parser.add_argument(
+        "--vol-sl-multiplier",
+        type=float,
+        default=1.2,
+        help="Multiplier for volatility-aware stop distance floor.",
+    )
     return parser.parse_args()
 
 
@@ -1654,6 +1828,8 @@ def main() -> None:
         print("No default symbol/timeframe match found; falling back to all datasets in data roots.")
 
     combo_filter = load_combo_filter(args.combo_filter) if args.combo_filter else None
+    entry_quality = _build_entry_quality_config(args)
+    trade_management = _build_trade_management_config(args)
     step2_overrides = {
         key: value
         for key, value in {
@@ -1685,6 +1861,8 @@ def main() -> None:
                 args.paper_execute and not args.live_mode,
                 enable_step2_paper,
                 step2_overrides,
+                entry_quality,
+                trade_management,
             )
 
 

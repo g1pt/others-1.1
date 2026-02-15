@@ -61,7 +61,7 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(mod, "_data_roots", lambda: [data_dir])
 
-    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides):
+    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides, entry_quality, trade_management):
         captured["path"] = path
         captured["paper_execute"] = paper_execute
         captured["enable_step2_paper"] = enable_step2_paper
@@ -91,6 +91,15 @@ def test_step2_overrides_from_cli_are_threaded_into_run(monkeypatch, tmp_path) -
             paper_daily_dd=0.03,
             paper_hard_dd=0.05,
             live_mode=False,
+            disable_killzone_filter=False,
+            killzones="7-11,13-16",
+            min_impulse_pct=0.0004,
+            min_ob_range_pct=0.0003,
+            time_stop_candles=24,
+            partial_tp_r=1.0,
+            partial_close_fraction=0.5,
+            vol_lookback=20,
+            vol_sl_multiplier=1.2,
         ),
     )
 
@@ -118,7 +127,7 @@ def test_live_mode_disables_paper_flows(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(mod, "_data_roots", lambda: [data_dir])
 
-    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides):
+    def _fake_run(path, combo_filter, initial_equity, risk_pct, max_dd_pct, max_trades_per_day, paper_execute, enable_step2_paper, step2_overrides, entry_quality, trade_management):
         captured["paper_execute"] = paper_execute
         captured["enable_step2_paper"] = enable_step2_paper
 
@@ -146,6 +155,15 @@ def test_live_mode_disables_paper_flows(monkeypatch, tmp_path) -> None:
             paper_daily_dd=None,
             paper_hard_dd=None,
             live_mode=True,
+            disable_killzone_filter=False,
+            killzones="7-11,13-16",
+            min_impulse_pct=0.0004,
+            min_ob_range_pct=0.0003,
+            time_stop_candles=24,
+            partial_tp_r=1.0,
+            partial_close_fraction=0.5,
+            vol_lookback=20,
+            vol_sl_multiplier=1.2,
         ),
     )
 
