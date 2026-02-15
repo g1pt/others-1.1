@@ -32,6 +32,17 @@ others-1.1/
 ## CLI
 - Run research: `python -m scripts.run_mmxm_research`
 - Run tests: `pytest -q`
+- Run only selected datasets (PowerShell):
+  - `@'
+[
+  "FX_SPX500, 2.csv",
+  "FX_SPX500, 15 (1).csv",
+  "OANDA_GBPUSD, 15.csv"
+]
+'@ | Set-Content .\keep_datasets.json`
+  - `python -m scripts.run_mmxm_research --all-datasets --live-mode --dataset-allowlist .\keep_datasets.json`
+  - alias also supported: `--dataset_allowlist`
+  - optional env fallback: set `MMXM_DATASET_ALLOWLIST` to the same JSON path
 
 ## TradingView Webhook Receiver (FastAPI)
 
