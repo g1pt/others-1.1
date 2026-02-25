@@ -32,6 +32,9 @@ others-1.1/
 ## CLI
 - Run research: `python -m scripts.run_mmxm_research`
 - Run tests: `pytest -q`
+- Run baseline v2 (fixed allowlist + KPI-gates + OOS report): `python -m scripts.run_baseline_workflow`
+  - adjust thresholds: `python -m scripts.run_baseline_workflow --min-trades 100 --min-winrate 0.58 --min-expectancy 0.7 --max-drawdown-r 2.5`
+  - override dataset set: `python -m scripts.run_baseline_workflow --allowlist configs/baseline_allowlist_v2.json`
 - Run only selected datasets (PowerShell):
   - `@'
 [
