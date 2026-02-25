@@ -134,6 +134,7 @@ def _data_roots() -> list[Path]:
         Path("/data"),
         Path("DATA"),
         Path("data"),
+        ROOT,
     ]
     seen = set()
     result = []
@@ -156,6 +157,7 @@ def _data_setup_message() -> str:
         str(Path("/data")),
         str(Path("DATA").resolve()),
         str(Path("data").resolve()),
+        str(ROOT),
     ]
     return (
         "No CSV/XLSX files found.\n"
@@ -164,7 +166,8 @@ def _data_setup_message() -> str:
         f"- DATA_DIR={searched[1]}\n"
         f"- {searched[2]}\n"
         f"- {searched[3]}\n"
-        f"- {searched[4]}\n\n"
+        f"- {searched[4]}\n"
+        f"- {searched[5]}\n\n"
         "Quick setup:\n"
         "1) Put your candle files in ./DATA (recommended), e.g. 'FX_SPX500, 1.csv'.\n"
         "2) Re-run: python -m scripts.run_mmxm_research --all-datasets --live-mode\n"
