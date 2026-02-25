@@ -12,27 +12,34 @@ pytest -q
 ```
 
 Resultaat:
-- **Geslaagd**: `26 passed`.
+- **Geslaagd**: `41 passed`.
 
 ### 2) Baseline research-run
 Command:
 
 ```bash
-python -m scripts.run_mmxm_research
+python -m scripts.run_mmxm_research --all-datasets --live-mode
 ```
 
 Resultaat:
-- **Geblokkeerd**: `No CSV/XLSX files found in /data or ./data`.
+- **Geslaagd**: datasets worden gevonden en verwerkt (o.a. `ICMARKETS_EURUSD` en `OANDA_GBPUSD` files in repo-root).
+- In deze run leverde de huidige entry-quality filter (`killzone + impulse + OB-range`) **0 gehouden setups** op per dataset, waardoor de baseline en varianten op **0 trades** uitkwamen.
+
+## Baseline metrics (huidige data + default filters)
+- trade count: `0`
+- expectancy: `0.000 R`
+- winrate: `0.00%`
+- max drawdown: `0.00%`
+- gebruikte parameterset: standaard instellingen + `--all-datasets --live-mode`
 
 ## Conclusie
-- De code en tests zijn in orde, maar er is momenteel **geen inputdataset** aanwezig om de baseline research-run te draaien.
+- De pipeline werkt weer end-to-end met aanwezige data.
+- Volgende optimalisatiepunt is filterkalibratie (killzone/impulse/OB-range) om voldoende trade count te krijgen voor statistisch bruikbare evaluatie.
 
-## Volgende actie (om plan volledig af te ronden)
-1. Plaats minimaal één geldige CSV of XLSX dataset in `./data`.
-2. Herhaal:
-   - `python -m scripts.run_mmxm_research`
-3. Vul daarna de baseline metrics aan in dit document:
+## Volgende actie
+1. Draai één iteratie met soepelere filters (bijv. lagere `--min-impulse-pct` en/of `--min-ob-range-pct`).
+2. Vergelijk KPI's met deze baseline:
    - trade count,
    - expectancy,
-   - winrate (indien beschikbaar),
-   - gebruikte parameterset.
+   - max drawdown.
+3. Leg per wijziging vast of het effect stabiel blijft over meerdere datasets/timeframes.
