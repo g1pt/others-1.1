@@ -1,0 +1,148 @@
+
+=== FX_SPX500, 15 (1) (FX_SPX500, 15 (1).csv) ===
+Loaded CSV candles from /workspace/others-1.1/FX_SPX500, 15 (1).csv | timestamp=time, open=open, high=high, low=low, close=close, volume=n/a | rows=300
+FVG sanity: true_count=47 false_count=28
+
+OB Tradability Failure Counts
+total=75
+tradable=37
+nontradable=38
+no_fvg=28
+no_bos=32
+not_near_level=1
+Summary by Phase
+SummaryRow(key='Phase:Manipulation', trades=10, winrate=0.5, expectancy=0.5, max_drawdown=3.0, stability=0.38742588672279304)
+
+Summary by Entry
+SummaryRow(key='Entry:Refinement Entry', trades=10, winrate=0.5, expectancy=0.5, max_drawdown=3.0, stability=0.38742588672279304)
+
+Summary by OB
+SummaryRow(key='OB:Tradable', trades=10, winrate=0.5, expectancy=0.5, max_drawdown=3.0, stability=0.38742588672279304)
+
+Summary by Combination
+SummaryRow(key='Combo:Manipulation|Refinement Entry|Tradable', trades=10, winrate=0.5, expectancy=0.5, max_drawdown=3.0, stability=0.38742588672279304)
+
+Combined Ranking
+SummaryRow(key='Combo:Manipulation|Refinement Entry|Tradable', trades=10, winrate=0.5, expectancy=0.5, max_drawdown=3.0, stability=0.38742588672279304)
+
+Top Candidates (filtered)
+
+Leakage Check
+total_trades=10
+
+By EntryType
+Refinement Entry: 10 (100.0%)
+
+By OB Tradability
+Tradable: 10 (100.0%)
+NonTradable: 0 (0.0%)
+Unknown: 0 (0.0%)
+
+By Phase
+Manipulation: 10 (100.0%)
+Manipulation vs Rest: 10 vs 0
+
+Cross: Phase x EntryType
+Manipulation | Refinement Entry: 10
+
+Cross: Tradable x EntryType
+Tradable | Refinement Entry: 10
+
+Cross: Phase x Tradable
+Manipulation | Tradable: 10
+
+=== Equity Simulation (initial=10000, risk=1%) ===
+trades=10
+end_equity=10499.70
+total_return_pct=5.00
+max_drawdown_pct=2.97
+
+=== Leakage Contribution (profit share) ===
+Total pnl_cash=499.70
+-- By EntryType
+Refinement Entry: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+-- By OB Tradability
+Tradable: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+-- By Phase
+Manipulation: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+-- Cross: Phase x EntryType (top 10 only)
+Manipulation | Refinement Entry: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+-- Cross: Tradable x EntryType
+Tradable | Refinement Entry: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+-- Cross: Phase x Tradable
+Manipulation | Tradable: trades=10 pnl_R=5.00 pnl_cash=499.70 contrib=100.00%
+missing_pnl_trades=0
+
+=== FX_SPX500, 30 (2) (FX_SPX500, 30 (2).csv) ===
+Loaded CSV candles from /workspace/others-1.1/FX_SPX500, 30 (2).csv | timestamp=time, open=open, high=high, low=low, close=close, volume=n/a | rows=300
+FVG sanity: true_count=45 false_count=36
+
+OB Tradability Failure Counts
+total=81
+tradable=31
+nontradable=50
+no_fvg=36
+no_bos=38
+not_near_level=4
+Summary by Phase
+SummaryRow(key='Phase:Manipulation', trades=5, winrate=0.4, expectancy=0.2, max_drawdown=2.0, stability=0.37833392500911667)
+
+Summary by Entry
+SummaryRow(key='Entry:Refinement Entry', trades=5, winrate=0.4, expectancy=0.2, max_drawdown=2.0, stability=0.37833392500911667)
+
+Summary by OB
+SummaryRow(key='OB:Tradable', trades=5, winrate=0.4, expectancy=0.2, max_drawdown=2.0, stability=0.37833392500911667)
+
+Summary by Combination
+SummaryRow(key='Combo:Manipulation|Refinement Entry|Tradable', trades=5, winrate=0.4, expectancy=0.2, max_drawdown=2.0, stability=0.37833392500911667)
+
+Combined Ranking
+SummaryRow(key='Combo:Manipulation|Refinement Entry|Tradable', trades=5, winrate=0.4, expectancy=0.2, max_drawdown=2.0, stability=0.37833392500911667)
+
+Top Candidates (filtered)
+
+Leakage Check
+total_trades=5
+
+By EntryType
+Refinement Entry: 5 (100.0%)
+
+By OB Tradability
+Tradable: 5 (100.0%)
+NonTradable: 0 (0.0%)
+Unknown: 0 (0.0%)
+
+By Phase
+Manipulation: 5 (100.0%)
+Manipulation vs Rest: 5 vs 0
+
+Cross: Phase x EntryType
+Manipulation | Refinement Entry: 5
+
+Cross: Tradable x EntryType
+Tradable | Refinement Entry: 5
+
+Cross: Phase x Tradable
+Manipulation | Tradable: 5
+
+=== Equity Simulation (initial=10000, risk=1%) ===
+trades=5
+end_equity=10094.99
+total_return_pct=0.95
+max_drawdown_pct=1.95
+
+=== Leakage Contribution (profit share) ===
+Total pnl_cash=94.99
+-- By EntryType
+Refinement Entry: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+-- By OB Tradability
+Tradable: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+-- By Phase
+Manipulation: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+-- Cross: Phase x EntryType (top 10 only)
+Manipulation | Refinement Entry: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+-- Cross: Tradable x EntryType
+Tradable | Refinement Entry: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+-- Cross: Phase x Tradable
+Manipulation | Tradable: trades=5 pnl_R=1.00 pnl_cash=94.99 contrib=100.00%
+missing_pnl_trades=0
