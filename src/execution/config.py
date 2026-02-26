@@ -38,6 +38,7 @@ class PaperEngineConfig:
     daily_profit_lock_pct: float = 0.0
     st_pct: float = 0.002
     sl_pct: float = 0.002
+    time_stop_minutes: int = 0
     symbol_map: Mapping[str, str] = field(default_factory=dict)
     rulesets: Mapping[str, RulesetConfig] = field(default_factory=dict)
     log_dir: Path = Path("logs")
@@ -70,6 +71,7 @@ class PaperEngineConfig:
             daily_profit_lock_pct=limits.daily_profit_lock_pct,
             st_pct=st_pct,
             sl_pct=st_pct,
+            time_stop_minutes=int(_env("TIME_STOP_MINUTES", "0")),
         )
 
 
