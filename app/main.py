@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from app.agent_rules import SYMBOL_MAP, SYMBOL_RULESETS
 from app.config import (
@@ -134,12 +134,16 @@ def tradingview_webhook(payload: TVWebhook) -> dict[str, Any]:
 
 
 @app.get("/status")
-def status() -> dict[str, Any]:
-    trades = _tail_jsonl(LOGS_DIR / "paper_trades.log")
-    orders = _tail_jsonl(LOGS_DIR / "paper_orders.log")
+def status(limit: int = Query(default=5, ge=1, le=100)) -> dict[str, Any]:
+    trades = _tail_jsonl(LOGS_DIR / "paper_trades.log", limit=limit)
+    orders = _tail_jsonl(LOGS_DIR / "paper_orders.log", limit=limit)
+    rejections = _tail_jsonl(LOGS_DIR / "rejections.log", limit=limit)
     return {
+        "limit": limit,
         "trades_logged": len(trades),
         "orders_logged": len(orders),
+        "rejections_logged": len(rejections),
         "last_trades": trades,
         "last_orders": orders,
+        "last_rejections": rejections,
     }
