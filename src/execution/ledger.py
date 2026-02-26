@@ -235,7 +235,13 @@ class Ledger:
             "consecutive_losses": self.consecutive_losses,
             "daily_drawdown_pct": self.daily_max_drawdown_pct,
             "overall_drawdown_pct": self.overall_drawdown_pct,
+            "daily_profit_pct": self._daily_profit_pct(),
         }
+
+    def _daily_profit_pct(self) -> float:
+        if not self.daily_start_equity:
+            return 0.0
+        return max(0.0, (self.current_equity - self.daily_start_equity) / self.daily_start_equity)
 
     def log_event(self, event: dict[str, object]) -> None:
         _ensure_parent(self.events_log_path)

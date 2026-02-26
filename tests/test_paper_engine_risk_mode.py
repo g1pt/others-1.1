@@ -158,3 +158,24 @@ def test_risk_cash_capped_by_remaining_hard_dd_buffer(tmp_path):
 
     event = _last_event(ledger.events_log_path)
     assert event["risk_cash"] == 100.0
+
+
+def test_daily_profit_lock_blocks_new_trades(tmp_path):
+    ledger = Ledger.load_or_init(tmp_path / "logs", initial_equity=10_000.0)
+    ledger.current_day = None
+    ledger.daily_start_equity = 10_000.0
+    ledger.current_equity = 10_250.0
+    config = PaperEngineConfig(
+        mode=ExecutionMode.PAPER_SIM,
+        risk_limits=RiskLimits(max_trades_per_day=2, daily_profit_lock_pct=0.02),
+        risk_per_trade_pct=0.005,
+        risk_mode="fixed_per_trade",
+        rulesets=_rulesets(),
+    )
+    engine = PaperEngine(config, ledger, data_loader=_loader)
+
+    ok, reason, trade_id = engine.process_signal(_payload())
+
+    assert ok is False
+    assert reason == "daily_profit_lock"
+    assert trade_id is None

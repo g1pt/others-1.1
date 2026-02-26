@@ -21,6 +21,7 @@ class RiskLimits:
     stop_after_consecutive_losses: int = 2
     daily_drawdown_stop_pct: float = 0.02
     hard_max_drawdown_pct: float = 0.03
+    daily_profit_lock_pct: float = 0.0
 
 
 RiskLimit = RiskLimits  # compat alias
@@ -95,6 +96,7 @@ def can_open_trade(
     consecutive_losses = int(ledger_state.get("consecutive_losses", 0))
     daily_dd = float(ledger_state.get("daily_drawdown_pct", 0.0))
     overall_dd = float(ledger_state.get("overall_drawdown_pct", 0.0))
+    daily_profit_pct = float(ledger_state.get("daily_profit_pct", 0.0))
 
     if limits.hard_max_drawdown_pct and overall_dd >= limits.hard_max_drawdown_pct:
         return False, "hard_drawdown_stop"
@@ -104,6 +106,8 @@ def can_open_trade(
         return False, "loss_streak_stop"
     if limits.max_trades_per_day and trades_today >= limits.max_trades_per_day:
         return False, "max_trades_per_day"
+    if limits.daily_profit_lock_pct and daily_profit_pct >= limits.daily_profit_lock_pct:
+        return False, "daily_profit_lock"
     return True, None
 
 def can_take_trade(today_stats: dict[str, float | int], config: RiskConfig) -> tuple[bool, RejectionReason | None]:
