@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -175,10 +175,19 @@ class PaperEngine:
         exit_price = None
         close_reason = None
 
+        time_stop_at = None
+        if self.config.time_stop_minutes > 0:
+            time_stop_at = entry_time + timedelta(minutes=self.config.time_stop_minutes)
+
         for candle in candles:
             candle_time = _parse_datetime(candle.timestamp)
             if candle_time is None or candle_time <= entry_time:
                 continue
+            if time_stop_at is not None and candle_time >= time_stop_at:
+                exit_time = candle.timestamp
+                exit_price = candle.close
+                close_reason = "TIME_STOP"
+                break
             if trade.direction == "buy":
                 sl_hit = candle.low <= trade.sl_price
                 tp_hit = candle.high >= trade.tp_price
@@ -206,7 +215,7 @@ class PaperEngine:
             last_candle = candles[-1]
             exit_time = last_candle.timestamp
             exit_price = last_candle.close
-            close_reason = "TIME"
+            close_reason = "TIME_STOP" if time_stop_at is not None else "TIME"
 
         if exit_time is None or exit_price is None:
             trade.status = TradeStatus.INVALID

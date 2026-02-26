@@ -179,3 +179,62 @@ def test_daily_profit_lock_blocks_new_trades(tmp_path):
     assert ok is False
     assert reason == "daily_profit_lock"
     assert trade_id is None
+
+
+def test_time_stop_minutes_closes_trade_with_time_stop_reason(tmp_path):
+    def loader(symbol: str, timeframe: str) -> list[Candle]:
+        _ = (symbol, timeframe)
+        return [
+            Candle(timestamp="2024-01-01T09:00:00+00:00", open=100, high=100.1, low=99.9, close=100.0),
+            Candle(timestamp="2024-01-01T09:30:00+00:00", open=100, high=100.1, low=99.9, close=100.0),
+            Candle(timestamp="2024-01-01T10:00:00+00:00", open=100, high=100.1, low=99.9, close=100.02),
+        ]
+
+    ledger = Ledger.load_or_init(tmp_path / "logs", initial_equity=10_000.0)
+    config = PaperEngineConfig(
+        mode=ExecutionMode.PAPER_SIM,
+        risk_limits=RiskLimits(max_trades_per_day=2),
+        risk_per_trade_pct=0.005,
+        risk_mode="fixed_per_trade",
+        time_stop_minutes=45,
+        rulesets=_rulesets(),
+    )
+    engine = PaperEngine(config, ledger, data_loader=loader)
+
+    ok, reason, trade_id = engine.process_signal(_payload())
+
+    assert ok is True
+    assert reason == "ok"
+    assert trade_id is not None
+
+    event = _last_event(ledger.events_log_path)
+    assert event["close_reason"] == "TIME_STOP"
+
+
+
+def test_default_fallback_close_reason_remains_time(tmp_path):
+    def loader(symbol: str, timeframe: str) -> list[Candle]:
+        _ = (symbol, timeframe)
+        return [
+            Candle(timestamp="2024-01-01T09:00:00+00:00", open=100, high=100.05, low=99.95, close=100.0),
+            Candle(timestamp="2024-01-01T09:30:00+00:00", open=100, high=100.05, low=99.95, close=100.01),
+        ]
+
+    ledger = Ledger.load_or_init(tmp_path / "logs", initial_equity=10_000.0)
+    config = PaperEngineConfig(
+        mode=ExecutionMode.PAPER_SIM,
+        risk_limits=RiskLimits(max_trades_per_day=2),
+        risk_per_trade_pct=0.005,
+        risk_mode="fixed_per_trade",
+        rulesets=_rulesets(),
+    )
+    engine = PaperEngine(config, ledger, data_loader=loader)
+
+    ok, reason, trade_id = engine.process_signal(_payload())
+
+    assert ok is True
+    assert reason == "ok"
+    assert trade_id is not None
+
+    event = _last_event(ledger.events_log_path)
+    assert event["close_reason"] == "TIME"
