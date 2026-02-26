@@ -80,8 +80,11 @@ Health check:
 - `DAILY_RISK_BUDGET_PCT=0.02` (bijv. 2% equity per dag)
 - `MIN_RISK_PER_TRADE_PCT=0.001`
 - `MAX_RISK_PER_TRADE_PCT=0.02`
+- `DAILY_PROFIT_LOCK_PCT=0.0` (bijv. `0.02` = stop met nieuwe trades na +2% dagwinst)
 
 Als `RISK_MODE=daily_budget`, dan verdeelt de engine het dagbudget over de resterende trade-slots van die dag.
+
+Als `DAILY_PROFIT_LOCK_PCT` > 0, dan blokkeert de engine nieuwe entries zodra de dagwinstdrempel is gehaald.
 
 ## SP500 lot-size referentie (CFD)
 - Bij veel CFD-brokers geldt vaak:
@@ -90,3 +93,16 @@ Als `RISK_MODE=daily_budget`, dan verdeelt de engine het dagbudget over de reste
   - `0.01 lot ≈ $0.10 per punt`
 - Dit verschilt per broker/symbool. Controleer altijd in MT5:
   - Right click op symbool → `Specification` → `Contract Size`.
+
+
+## Waarom deze manier van bouwen sterk is
+Deze repo bouwt bewust in kleine, testbare stappen met risk-gates en duidelijke logging. Dat heeft directe voordelen:
+
+- **Minder regressies:** elke wijziging krijgt gerichte tests, zodat bestaande flow stabiel blijft.
+- **Sneller leren met minder schade:** nieuwe ideeën eerst in paper-sim + gates, pas daarna opschalen.
+- **Profitability beschermen:** drawdown-limieten, loss-streak stops en profit-locks beperken overtrading en winst-terugval.
+- **Transparantie:** rejections en trade-events worden gelogd met redenen, waardoor beslissingen uitlegbaar zijn.
+- **Snelle tuning:** gedrag is via env/config aanpasbaar (`RISK_MODE`, budget, drawdown, profit-lock) zonder codewijziging.
+- **Schaalbare software-opbouw:** losse modules (risk, ledger, engine, reporting) houden het systeem onderhoudbaar.
+
+Praktisch betekent dit: je kan meer vragen, sneller itereren en tegelijk je downside beter beheersen.

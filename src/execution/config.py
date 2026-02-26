@@ -35,6 +35,7 @@ class PaperEngineConfig:
     daily_risk_budget_pct: float = 0.02
     min_risk_per_trade_pct: float = 0.003
     max_risk_per_trade_pct: float = 0.01
+    daily_profit_lock_pct: float = 0.0
     st_pct: float = 0.002
     sl_pct: float = 0.002
     symbol_map: Mapping[str, str] = field(default_factory=dict)
@@ -56,6 +57,7 @@ class PaperEngineConfig:
             stop_after_consecutive_losses=int(_env("MAX_CONSEC_LOSSES", "2")),
             daily_drawdown_stop_pct=float(_env("DAILY_DD_STOP_PCT", "0.02")),
             hard_max_drawdown_pct=float(_env("HARD_DD_STOP_PCT", "0.03")),
+            daily_profit_lock_pct=float(_env("DAILY_PROFIT_LOCK_PCT", "0.0")),
         )
 
         return cls(
@@ -65,6 +67,7 @@ class PaperEngineConfig:
             daily_risk_budget_pct=float(_env("DAILY_RISK_BUDGET_PCT", "0.02")),
             min_risk_per_trade_pct=float(_env("MIN_RISK_PER_TRADE_PCT", "0.003")),
             max_risk_per_trade_pct=float(_env("MAX_RISK_PER_TRADE_PCT", "0.01")),
+            daily_profit_lock_pct=limits.daily_profit_lock_pct,
             st_pct=st_pct,
             sl_pct=st_pct,
         )
